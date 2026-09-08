@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef, useMemo } from "react";
 import { useParams } from "react-router-dom";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   Menu,
   QrCode,
@@ -34,8 +34,14 @@ export const ParticipantEventPage: React.FC = () => {
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [activeActivity, setActiveActivity] = useState<Activity | null>(null);
   const [participantCount, setParticipantCount] = useState(0);
-  const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Authoritative activity timer ticker (1-second tick)
+  const [nowTimestamp, setNowTimestamp] = useState<number>(Date.now());
+  useEffect(() => {
+    const ticker = setInterval(() => setNowTimestamp(Date.now()), 1000);
+    return () => clearInterval(ticker);
+  }, []);
 
   // QR Modal (Requirement: Top right QR button)
   const [showQrModal, setShowQrModal] = useState(false);
@@ -181,8 +187,7 @@ export const ParticipantEventPage: React.FC = () => {
                 ...prev,
                 status: "LIVE",
                 startedAt: data.startedAt,
-                endsAt: data.endsAt,
-                duration: data.duration,
+                endsAt: null,
               }
             : null
         );
@@ -196,13 +201,16 @@ export const ParticipantEventPage: React.FC = () => {
                 ...prev,
                 status: "ENDED",
                 stoppedAt: data.stoppedAt,
+                activeActivityId: null,
+                active_activity_id: null,
               }
             : null
         );
+        setActiveActivity(null);
       });
 
       socket.on("activity:started", (data) => {
-        setActiveActivity(data.activity);
+        setActiveActivity({ ...data.activity, status: "LIVE" });
         const pId = participant?.id || (participant as any)?._id;
         const newActId = data.activity.id || data.activity._id;
         const cachedVote = pId ? localStorage.getItem(`crowdpulse_poll_voted_${newActId}_${pId}`) : null;
@@ -270,34 +278,16 @@ export const ParticipantEventPage: React.FC = () => {
     }
   }, [eventId]);
 
-  // Event Lifecycle Countdown Timer
-  useEffect(() => {
-    const endsAtValue = event?.endsAt || (event as any)?.ends_at;
-    const isLive = event?.status === "LIVE" || event?.status === "live";
+  const getActivityRemainingSeconds = () => {
+    if (!activeActivity) return null;
+    const endsAtValue = activeActivity.endsAt || (activeActivity as any).ends_at;
+    if (!endsAtValue) return null;
+    const diff = Math.max(0, Math.ceil((new Date(endsAtValue).getTime() - nowTimestamp) / 1000));
+    return diff;
+  };
 
-    if (!event || !isLive || !endsAtValue) {
-      setRemainingSeconds(null);
-      return;
-    }
-
-    const updateRemaining = () => {
-      const ends = new Date(endsAtValue).getTime();
-      const now = Date.now();
-      const diffSec = Math.max(0, Math.floor((ends - now) / 1000));
-      setRemainingSeconds(diffSec);
-
-      if (diffSec <= 0) {
-        setEvent((prev) => (prev ? { ...prev, status: "ENDED" } : null));
-      }
-    };
-
-    updateRemaining();
-    const interval = setInterval(updateRemaining, 1000);
-    return () => clearInterval(interval);
-  }, [event?.status, event?.endsAt, (event as any)?.ends_at]);
-
-  const formatTimer = (totalSeconds: number | null) => {
-    if (totalSeconds === null || isNaN(totalSeconds)) return "--:--";
+  const formatSeconds = (totalSeconds: number | null) => {
+    if (totalSeconds === null || isNaN(totalSeconds)) return "00:00";
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
     return `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
@@ -411,27 +401,26 @@ export const ParticipantEventPage: React.FC = () => {
   const isLive = event.status === "LIVE" || event.status === "live" || event.status === "active";
   const isEnded = event.status === "ENDED" || event.status === "ended";
 
+  const actRemaining = isLive && activeActivity ? getActivityRemainingSeconds() : null;
+  const actTotalDur = activeActivity?.duration || 30;
+  const actProgressPct = actRemaining !== null ? Math.max(0, Math.min(100, (actRemaining / actTotalDur) * 100)) : 0;
+  const actIsUrgent = actRemaining !== null && actRemaining <= 10 && actRemaining > 0;
+
   return (
-    <div className="min-h-screen bg-[#0c1017] flex flex-col justify-between max-w-md mx-auto relative shadow-2xl border-x border-slate-800/40">
+    <div className="min-h-screen bg-[#080c14] flex flex-col justify-between max-w-md mx-auto relative shadow-2xl border-x border-slate-800/60 selection:bg-emerald-500/30 selection:text-emerald-300">
       {/* Mobile Top Bar with Required QR Icon in Top-Right */}
-      <header className="sticky top-0 z-40 bg-[#121620]/95 backdrop-blur-md border-b border-slate-800/80 px-4 py-3 flex items-center justify-between">
+      <header className="sticky top-0 z-40 bg-[#0c1017]/95 backdrop-blur-md border-b border-slate-800/80 px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-2.5 min-w-0">
-          <button
-            className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
-            aria-label="Event Menu"
-          >
-            <Menu className="w-5 h-5" />
-          </button>
           <div className="min-w-0">
-            <h1 className="text-xs sm:text-sm font-bold text-white truncate tracking-tight">
+            <h1 className="text-xs sm:text-sm font-black text-white truncate tracking-tight">
               {event.title}
             </h1>
             <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-mono">
-              <span>#{joinCode}</span>
+              <span className="font-bold text-slate-300">#{joinCode}</span>
               <span>•</span>
-              <span className="flex items-center gap-0.5 text-cyan-400">
+              <span className="flex items-center gap-1 text-cyan-400">
                 <Users className="w-2.5 h-2.5" />
-                {participantCount}
+                <span className="tabular-nums font-bold">{participantCount}</span>
               </span>
               {isWaiting && (
                 <>
@@ -439,19 +428,19 @@ export const ParticipantEventPage: React.FC = () => {
                   <span className="text-amber-400 font-bold">WAITING</span>
                 </>
               )}
-              {isLive && remainingSeconds !== null && (
+              {isLive && (
                 <>
                   <span>•</span>
                   <span className="text-emerald-400 font-bold flex items-center gap-1">
-                    <Clock className="w-2.5 h-2.5" />
-                    {formatTimer(remainingSeconds)}
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                    LIVE
                   </span>
                 </>
               )}
               {isEnded && (
                 <>
                   <span>•</span>
-                  <span className="text-red-400 font-bold">ENDED</span>
+                  <span className="text-rose-400 font-bold">ENDED</span>
                 </>
               )}
             </div>
@@ -462,14 +451,14 @@ export const ParticipantEventPage: React.FC = () => {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowQrModal(true)}
-            className="p-2 text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-xl hover:bg-emerald-500/20 transition-all active:scale-95"
+            className="p-2 text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-xl hover:bg-emerald-500/20 transition-all active:scale-95 shadow-sm"
             title="Event QR Code"
           >
             <QrCode className="w-4 h-4" />
           </button>
 
           <div
-            className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 font-bold text-xs flex items-center justify-center flex-shrink-0"
+            className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 font-black text-xs flex items-center justify-center flex-shrink-0 shadow-sm"
             title={participant?.name}
           >
             {participant?.name ? participant.name.charAt(0).toUpperCase() : "U"}
@@ -488,11 +477,11 @@ export const ParticipantEventPage: React.FC = () => {
               </div>
 
               <div className="space-y-1.5">
-                <span className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-400 bg-amber-950/40 px-3 py-1 rounded-full border border-amber-500/30">
+                <span className="inline-flex items-center gap-1.5 text-xs font-mono font-bold text-amber-400 bg-amber-500/10 px-3 py-1 rounded-full border border-amber-500/30">
                   <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
-                  🟡 WAITING FOR HOST
+                  WAITING FOR HOST
                 </span>
-                <h2 className="text-2xl font-black text-white">
+                <h2 className="text-2xl font-black text-white tracking-tight">
                   {event.title}
                 </h2>
                 <p className="text-xs sm:text-sm text-slate-300 max-w-xs mx-auto">
@@ -501,15 +490,15 @@ export const ParticipantEventPage: React.FC = () => {
               </div>
 
               <div className="flex items-center justify-center gap-2 pt-1">
-                <div className="px-3 py-1.5 bg-[#161b26] border border-slate-800 rounded-xl text-xs text-slate-300 font-medium">
-                  Participants: <span className="font-bold text-cyan-400 font-mono">{participantCount}</span>
+                <div className="px-3 py-1.5 bg-[#121722] border border-slate-800 rounded-xl text-xs text-slate-300 font-medium shadow-inner">
+                  Participants: <span className="font-bold text-cyan-400 font-mono tabular-nums">{participantCount}</span>
                 </div>
-                <div className="px-3 py-1.5 bg-[#161b26] border border-slate-800 rounded-xl text-xs text-slate-300 font-mono">
+                <div className="px-3 py-1.5 bg-[#121722] border border-slate-800 rounded-xl text-xs text-slate-300 font-mono shadow-inner">
                   Join Code: <span className="font-bold text-emerald-400">#{joinCode}</span>
                 </div>
               </div>
 
-              <div className="p-2 bg-[#161b26]/70 border border-slate-800/80 rounded-2xl inline-flex items-center gap-2 text-xs text-slate-300">
+              <div className="p-2 bg-[#121722] border border-slate-800 rounded-2xl inline-flex items-center gap-2 text-xs text-slate-300 shadow-sm">
                 <span className="w-2 h-2 rounded-full bg-emerald-400" />
                 <span>You joined as <strong className="text-white">{participant?.name}</strong></span>
               </div>
@@ -572,24 +561,52 @@ export const ParticipantEventPage: React.FC = () => {
                 The host will launch a poll, word cloud, or quiz question shortly. Keep your screen open!
               </p>
             </div>
-
-            {remainingSeconds !== null && (
-              <div className="p-3 bg-emerald-950/40 border border-emerald-500/30 rounded-2xl inline-flex items-center gap-2 text-xs text-emerald-300 font-mono font-bold">
-                <Clock className="w-4 h-4" />
-                <span>{formatTimer(remainingSeconds)} remaining</span>
-              </div>
-            )}
           </div>
         )}
 
         {/* CASE 4: LIVE POLL */}
         {isLive && activeActivity && activeActivity.type === "poll" && (
           <div className="space-y-5 my-auto animate-in fade-in duration-300">
+            {/* Prominent Activity Authoritative Timer Banner */}
+            <div className="bg-[#121722] border border-slate-800 rounded-2xl p-3.5 shadow-lg space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-2.5 py-0.5 rounded-full inline-flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                    LIVE
+                  </span>
+                  <span className="text-xs font-semibold text-slate-300">
+                    Live Poll
+                  </span>
+                </div>
+
+                {actRemaining !== null && (
+                  <div
+                    className={`flex items-center gap-1.5 px-3 py-1 rounded-xl border font-mono font-bold text-xs transition-all ${
+                      actIsUrgent
+                        ? "bg-rose-500/20 border-rose-500/50 text-rose-300 animate-pulse shadow-sm shadow-rose-950/40"
+                        : "bg-[#090d14] border-slate-700/80 text-emerald-300"
+                    }`}
+                  >
+                    <Clock className={`w-3.5 h-3.5 ${actIsUrgent ? "text-rose-400" : "text-emerald-400"}`} />
+                    <span className="tabular-nums">{formatSeconds(actRemaining)}</span>
+                  </div>
+                )}
+              </div>
+
+              {actRemaining !== null && (
+                <div className="w-full bg-slate-800/80 h-1.5 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full transition-all duration-1000 ease-linear rounded-full ${
+                      actIsUrgent ? "bg-rose-500" : "bg-emerald-400"
+                    }`}
+                    style={{ width: `${actProgressPct}%` }}
+                  />
+                </div>
+              )}
+            </div>
+
             <div className="text-center space-y-1">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 bg-emerald-950/40 border border-emerald-500/30 px-2.5 py-0.5 rounded-full inline-flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                Live Poll
-              </span>
               <h2 className="text-xl font-extrabold text-white tracking-tight pt-1">
                 {activeActivity.title}
               </h2>
@@ -624,13 +641,13 @@ export const ParticipantEventPage: React.FC = () => {
                     className={`w-full text-left p-4 rounded-2xl border transition-all relative overflow-hidden flex items-center justify-between ${
                       isSelected
                         ? "bg-emerald-950/60 border-emerald-500 text-white ring-1 ring-emerald-500/40 shadow-lg shadow-emerald-950/30"
-                        : "bg-[#161b26] border-slate-800 text-slate-200 hover:border-slate-700"
+                        : "bg-[#121722] border-slate-800/90 text-slate-200 hover:border-slate-700/80"
                     } ${hasVotedPoll ? "cursor-default" : "active:scale-[0.99]"}`}
                   >
                     {/* Live progress background if participant has voted */}
                     {hasVotedPoll && (
                       <div
-                        className={`absolute top-0 bottom-0 left-0 transition-all duration-700 ease-out rounded-r-xl ${
+                        className={`absolute top-0 bottom-0 left-0 transition-[width] duration-500 ease-out rounded-r-xl ${
                           isSelected
                             ? "bg-emerald-500/25 border-r-2 border-emerald-400"
                             : isLeader
@@ -647,8 +664,8 @@ export const ParticipantEventPage: React.FC = () => {
                           isSelected
                             ? "bg-emerald-500 text-slate-950 border-emerald-400 font-black"
                             : isLeader
-                            ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/30"
-                            : "bg-slate-800 text-slate-300 border-slate-700"
+                            ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/30 font-bold"
+                            : "bg-slate-800 text-slate-300 border-slate-700 font-mono"
                         }`}
                       >
                         {isLeader && votes > 0 ? (
@@ -663,8 +680,8 @@ export const ParticipantEventPage: React.FC = () => {
                     <div className="relative z-10 flex items-center gap-2 flex-shrink-0">
                       {hasVotedPoll && (
                         <div className="flex items-center gap-2 font-mono text-xs">
-                          <span className="text-slate-400 text-[11px]">{votes}v</span>
-                          <span className="font-bold text-slate-200 bg-slate-800/80 px-2 py-0.5 rounded-lg border border-slate-700">
+                          <span className="text-slate-400 text-[11px] tabular-nums">{votes}v</span>
+                          <span className="font-bold text-slate-200 bg-slate-800/80 px-2 py-0.5 rounded-lg border border-slate-700 tabular-nums">
                             {percentage}%
                           </span>
                         </div>
@@ -684,7 +701,7 @@ export const ParticipantEventPage: React.FC = () => {
               <button
                 onClick={handleVotePoll}
                 disabled={!selectedPollOption}
-                className="w-full py-3.5 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-sm transition-all shadow-lg shadow-emerald-950 active:scale-95 disabled:opacity-40"
+                className="w-full py-3.5 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-sm transition-all shadow-lg shadow-emerald-950/40 active:scale-95 disabled:opacity-40"
               >
                 Submit Response
               </button>
@@ -704,11 +721,47 @@ export const ParticipantEventPage: React.FC = () => {
 
         {/* CASE 3: WORD CLOUD */}
         {activeActivity && activeActivity.type === "word_cloud" && (
-          <div className="space-y-6 my-auto animate-in fade-in duration-300">
+          <div className="space-y-5 my-auto animate-in fade-in duration-300">
+            {/* Prominent Activity Authoritative Timer Banner */}
+            <div className="bg-[#121722] border border-slate-800 rounded-2xl p-3.5 shadow-lg space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-cyan-400 bg-cyan-950/60 border border-cyan-500/30 px-2.5 py-0.5 rounded-full inline-flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
+                    LIVE
+                  </span>
+                  <span className="text-xs font-semibold text-slate-300">
+                    Word Cloud
+                  </span>
+                </div>
+
+                {actRemaining !== null && (
+                  <div
+                    className={`flex items-center gap-1.5 px-3 py-1 rounded-xl border font-mono font-bold text-xs transition-all ${
+                      actIsUrgent
+                        ? "bg-rose-500/20 border-rose-500/50 text-rose-300 animate-pulse shadow-sm shadow-rose-950/40"
+                        : "bg-[#090d14] border-slate-700/80 text-cyan-300"
+                    }`}
+                  >
+                    <Clock className={`w-3.5 h-3.5 ${actIsUrgent ? "text-rose-400" : "text-cyan-400"}`} />
+                    <span className="tabular-nums">{formatSeconds(actRemaining)}</span>
+                  </div>
+                )}
+              </div>
+
+              {actRemaining !== null && (
+                <div className="w-full bg-slate-800/80 h-1.5 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full transition-all duration-1000 ease-linear rounded-full ${
+                      actIsUrgent ? "bg-rose-500" : "bg-cyan-400"
+                    }`}
+                    style={{ width: `${actProgressPct}%` }}
+                  />
+                </div>
+              )}
+            </div>
+
             <div className="text-center space-y-1">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-400 bg-cyan-950/40 border border-cyan-500/30 px-2.5 py-0.5 rounded-full">
-                ☁ Word Cloud
-              </span>
               <h2 className="text-xl font-extrabold text-white tracking-tight pt-1">
                 {activeActivity.title}
               </h2>
@@ -718,7 +771,7 @@ export const ParticipantEventPage: React.FC = () => {
               {wordCloudList.map((item, idx) => (
                 <span
                   key={idx}
-                  className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800/80 border border-slate-700/60 text-slate-200"
+                  className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800/80 border border-slate-700/60 text-slate-200 shadow-sm"
                 >
                   {item.text}
                 </span>
@@ -731,7 +784,7 @@ export const ParticipantEventPage: React.FC = () => {
 
             <button
               onClick={() => setShowWordInputModal(true)}
-              className="w-full py-3.5 rounded-2xl bg-[#1c2333] hover:bg-[#222b3f] text-white font-bold text-sm border border-slate-700/80 shadow-lg active:scale-95 transition-all"
+              className="w-full py-3.5 rounded-2xl bg-[#121722] hover:bg-[#182030] text-white font-bold text-sm border border-slate-700/80 shadow-lg active:scale-95 transition-all"
             >
               Add response
             </button>
@@ -760,17 +813,23 @@ export const ParticipantEventPage: React.FC = () => {
                 return (
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-purple-400 bg-purple-950/40 border border-purple-500/30 px-3 py-1 rounded-full">
+                      <span className="text-xs font-mono font-bold text-purple-400 bg-purple-950/40 border border-purple-500/30 px-3 py-1 rounded-full">
                         Question {qIdx + 1} / {activeActivity.questions.length}
                       </span>
 
-                      <div className="flex items-center gap-1.5 font-mono font-bold text-sm text-slate-200 bg-slate-800 px-3 py-1 rounded-full">
-                        <Clock className={`w-3.5 h-3.5 ${quizTimer <= 5 ? "text-red-400" : "text-cyan-400"}`} />
-                        <span>00:{quizTimer.toString().padStart(2, "0")}</span>
+                      <div className={`flex items-center gap-1.5 font-mono font-bold text-sm px-3 py-1 rounded-full border ${
+                        actIsUrgent || quizTimer <= 5
+                          ? "bg-rose-500/20 text-rose-300 border-rose-500/50 animate-pulse"
+                          : "bg-slate-800/80 text-slate-200 border-slate-700/60"
+                      }`}>
+                        <Clock className={`w-3.5 h-3.5 ${actIsUrgent || quizTimer <= 5 ? "text-rose-400" : "text-cyan-400"}`} />
+                        <span className="tabular-nums">
+                          {actRemaining !== null ? formatSeconds(actRemaining) : `00:${quizTimer.toString().padStart(2, "0")}`}
+                        </span>
                       </div>
                     </div>
 
-                    <div className="bg-[#161b26] border border-slate-700/80 rounded-2xl p-5 text-center shadow-lg">
+                    <div className="bg-[#121722] border border-slate-800/90 rounded-2xl p-5 text-center shadow-lg">
                       <h3 className="text-base font-bold text-white leading-snug">
                         {currentQ.question_text}
                       </h3>
@@ -787,12 +846,12 @@ export const ParticipantEventPage: React.FC = () => {
                             onClick={() => setSelectedQuizOption(optId)}
                             className={`w-full text-left p-4 rounded-2xl border transition-all flex items-center justify-between ${
                               isSelected
-                                ? "bg-purple-950/60 border-purple-500 text-white ring-1 ring-purple-500/50"
-                                : "bg-[#161b26] border-slate-800 text-slate-200 hover:border-slate-700"
+                                ? "bg-purple-950/60 border-purple-500 text-white ring-1 ring-purple-500/50 shadow-lg shadow-purple-950/30"
+                                : "bg-[#121722] border-slate-800/90 text-slate-200 hover:border-slate-700/80"
                             } ${(hasSubmittedQuiz || quizTimer === 0) ? "opacity-80" : "active:scale-[0.99]"}`}
                           >
                             <div className="flex items-center gap-3">
-                              <span className="w-6 h-6 rounded-lg bg-slate-800 text-slate-300 text-xs font-bold flex items-center justify-center border border-slate-700">
+                              <span className="w-6 h-6 rounded-lg bg-slate-800 text-slate-300 text-xs font-mono font-bold flex items-center justify-center border border-slate-700">
                                 {String.fromCharCode(65 + idx)}
                               </span>
                               <span className="text-sm font-semibold">{opt.option_text}</span>
@@ -810,7 +869,7 @@ export const ParticipantEventPage: React.FC = () => {
                       <button
                         onClick={handleAnswerQuiz}
                         disabled={!selectedQuizOption || quizTimer === 0}
-                        className="w-full py-3.5 rounded-2xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-sm shadow-lg shadow-purple-950 active:scale-95 transition-all disabled:opacity-40"
+                        className="w-full py-3.5 rounded-2xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-sm shadow-lg shadow-purple-950/40 active:scale-95 transition-all disabled:opacity-40"
                       >
                         Submit Answer
                       </button>
@@ -834,51 +893,64 @@ export const ParticipantEventPage: React.FC = () => {
       </main>
 
       {/* Word Cloud Input Modal */}
-      {showWordInputModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="w-full max-w-sm bg-[#161b26] border border-slate-700 rounded-3xl p-6 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between">
-              <h4 className="text-base font-bold text-white">Add your word</h4>
-              <button
-                onClick={() => setShowWordInputModal(false)}
-                className="p-1 rounded-full text-slate-400 hover:text-white"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSubmitWord} className="space-y-4">
-              <input
-                type="text"
-                required
-                autoFocus
-                maxLength={40}
-                value={wordInput}
-                onChange={(e) => setWordInput(e.target.value)}
-                placeholder="Type word or short phrase..."
-                className="w-full bg-[#0c1017] border border-slate-700 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
-              />
-
-              <div className="flex gap-2">
+      <AnimatePresence>
+        {showWordInputModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md"
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0, y: 10 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 10 }}
+              transition={{ type: "spring", damping: 25, stiffness: 350 }}
+              className="w-full max-w-sm bg-[#121722] border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-4"
+            >
+              <div className="flex items-center justify-between">
+                <h4 className="text-base font-bold text-white tracking-tight">Add your response</h4>
                 <button
-                  type="button"
                   onClick={() => setShowWordInputModal(false)}
-                  className="flex-1 py-2.5 rounded-xl bg-slate-800 text-slate-300 text-xs font-semibold hover:bg-slate-700"
+                  className="p-1 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
                 >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={submittingWord}
-                  className="flex-1 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold shadow-lg shadow-cyan-950 disabled:opacity-50"
-                >
-                  Submit
+                  <X className="w-4 h-4" />
                 </button>
               </div>
-            </form>
-          </div>
-        </div>
-      )}
+
+              <form onSubmit={handleSubmitWord} className="space-y-4">
+                <input
+                  type="text"
+                  required
+                  autoFocus
+                  maxLength={40}
+                  value={wordInput}
+                  onChange={(e) => setWordInput(e.target.value)}
+                  placeholder="Type word or short phrase..."
+                  className="w-full bg-[#090d14] border border-slate-700/80 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 shadow-inner transition-colors"
+                />
+
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowWordInputModal(false)}
+                    className="flex-1 py-2.5 rounded-xl bg-slate-800/80 text-slate-300 text-xs font-semibold hover:bg-slate-700 transition-colors border border-slate-700/60"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={submittingWord}
+                    className="flex-1 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold shadow-lg shadow-cyan-950/40 disabled:opacity-50 transition-all active:scale-95"
+                  >
+                    Submit
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Persistent Bottom Bar */}
       <footer className="border-t border-slate-800/60 bg-[#0c1017] px-4 py-2 flex items-center justify-between text-[11px] text-slate-500">

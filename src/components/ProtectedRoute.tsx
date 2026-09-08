@@ -17,7 +17,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#0c1017] flex flex-col items-center justify-center space-y-4">
+      <div className="min-h-screen bg-[#080c14] flex flex-col items-center justify-center space-y-4">
         <div className="w-10 h-10 border-4 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin" />
         <p className="text-xs text-slate-400 font-medium tracking-wide">
           Verifying authorization...
@@ -34,9 +34,9 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   // Authenticated but does not have admin role
   if (requireAdmin && user.role !== "admin") {
     return (
-      <div className="min-h-screen bg-[#0c1017] flex items-center justify-center p-4">
-        <div className="max-w-md w-full bg-[#161b26] border border-red-500/30 rounded-3xl p-8 text-center space-y-5 shadow-2xl">
-          <div className="w-14 h-14 rounded-2xl bg-red-500/10 text-red-400 flex items-center justify-center mx-auto border border-red-500/20 shadow-lg shadow-red-950/40">
+      <div className="min-h-screen bg-[#080c14] flex items-center justify-center p-4">
+        <div className="max-w-md w-full bg-[#121722] border border-rose-500/30 rounded-3xl p-8 text-center space-y-5 shadow-2xl">
+          <div className="w-14 h-14 rounded-2xl bg-rose-500/10 text-rose-400 flex items-center justify-center mx-auto border border-rose-500/20 shadow-lg shadow-rose-950/40">
             <ShieldAlert className="w-7 h-7" />
           </div>
           <div>

@@ -56,7 +56,15 @@ export interface Participant {
 }
 
 export type ActivityType = 'poll' | 'word_cloud' | 'quiz';
-export type ActivityStatus = 'draft' | 'active' | 'ended';
+export type ActivityStatus =
+  | 'WAITING'
+  | 'LIVE'
+  | 'ENDED'
+  | 'draft'
+  | 'active'
+  | 'ended'
+  | 'waiting'
+  | 'live';
 
 export type PollType =
   | 'single'
@@ -128,6 +136,13 @@ export interface Activity {
   type: ActivityType;
   title: string;
   status: ActivityStatus;
+  duration?: number; // In seconds, e.g. 30
+  startedAt?: string | null;
+  started_at?: string | null;
+  endsAt?: string | null;
+  ends_at?: string | null;
+  stoppedAt?: string | null;
+  stopped_at?: string | null;
   orderIndex?: number;
   order_index?: number;
   settings: ActivitySettings;

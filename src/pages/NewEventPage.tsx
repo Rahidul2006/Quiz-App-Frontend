@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { ArrowLeft, ArrowUpRight, Clock, ShieldCheck } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { ArrowLeft, ArrowUpRight, Clock, ShieldCheck, Sparkles, Check, HelpCircle } from "lucide-react";
 import { api } from "../services/api";
 
 const DURATION_PRESETS = [5, 10, 15, 20, 30, 45, 60];
@@ -38,65 +39,76 @@ export const NewEventPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-[#0c1017] flex flex-col justify-center items-center p-4">
-      <div className="w-full max-w-lg bg-[#161b26] border border-slate-700/80 rounded-3xl p-6 md:p-8 shadow-2xl space-y-6">
-        <div className="flex items-center gap-3">
+    <div className="min-h-screen bg-[#080c14] flex flex-col justify-center items-center p-4 relative selection:bg-emerald-500/30 selection:text-emerald-300">
+      {/* Ambient background light */}
+      <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[600px] h-[350px] bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
+
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96, y: 15 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        transition={{ duration: 0.4 }}
+        className="w-full max-w-xl bg-[#121722] border border-slate-800/90 rounded-3xl p-6 sm:p-9 shadow-2xl space-y-7 relative z-10"
+      >
+        <div className="flex items-center gap-3.5 pb-4 border-b border-slate-800/80">
           <Link
             to="/dashboard"
-            className="p-2 rounded-xl bg-slate-800 text-slate-300 hover:text-white transition-colors"
+            className="p-2.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors border border-slate-700/60"
           >
             <ArrowLeft className="w-4 h-4" />
           </Link>
           <div>
-            <h2 className="text-xl font-bold text-white">Create New Event</h2>
-            <p className="text-xs text-slate-400">
-              Set up your live audience engagement room with waiting room and timing controls.
+            <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight">Create New Event</h2>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Set up your interactive audience room with waiting lounge and timer controls.
             </p>
           </div>
         </div>
 
-        <form onSubmit={handleCreate} className="space-y-5">
-          <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-              Event Title *
-            </label>
-            <input
-              type="text"
-              required
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g. Annual Community Conference 2026"
-              className="w-full bg-[#0c1017] border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
-            />
+        <form onSubmit={handleCreate} className="space-y-6">
+          {/* Section 1: Event Details */}
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">
+                Event Title <span className="text-emerald-400">*</span>
+              </label>
+              <input
+                type="text"
+                required
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="e.g. All-Hands Keynote & Q&A 2026"
+                className="w-full bg-[#090d14] border border-slate-700/80 rounded-2xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">
+                Description <span className="text-slate-500 lowercase font-normal">(optional)</span>
+              </label>
+              <textarea
+                rows={2}
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Add session agenda, speaker notes, or instructions for attendees..."
+                className="w-full bg-[#090d14] border border-slate-700/80 rounded-2xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all font-medium resize-none"
+              />
+            </div>
           </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-              Description (optional)
-            </label>
-            <textarea
-              rows={2}
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Add meetup agenda, speaker notes, or instructions..."
-              className="w-full bg-[#0c1017] border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
-            />
-          </div>
-
-          {/* Timing System / Duration Configuration */}
-          <div className="space-y-2 p-4 bg-[#0c1017]/80 rounded-2xl border border-slate-800/80">
+          {/* Section 2: Timing System / Duration Configuration */}
+          <div className="space-y-3 p-5 bg-[#090d14] rounded-2xl border border-slate-800/80">
             <div className="flex items-center justify-between">
-              <label className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
-                <Clock className="w-3.5 h-3.5 text-emerald-400" />
+              <label className="text-xs font-bold text-slate-200 flex items-center gap-1.5 uppercase tracking-wider">
+                <Clock className="w-4 h-4 text-emerald-400" />
                 <span>Event Duration</span>
               </label>
-              <span className="text-[11px] font-mono text-emerald-400 font-bold">
+              <span className="text-xs font-mono text-emerald-400 font-black bg-emerald-950/60 border border-emerald-500/30 px-2.5 py-0.5 rounded-lg tabular-nums">
                 {selectedDuration} min
               </span>
             </div>
 
-            <p className="text-[11px] text-slate-400">
-              Event starts in <strong className="text-amber-400">WAITING</strong> mode. Timer only begins when you click <strong className="text-emerald-400">▶ START EVENT</strong>.
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              Your room starts in <strong className="text-amber-400 font-semibold">WAITING</strong> mode. The countdown timer only begins when you click <strong className="text-emerald-400 font-semibold">START EVENT</strong>.
             </p>
 
             <div className="grid grid-cols-4 gap-2 pt-1">
@@ -108,13 +120,13 @@ export const NewEventPage: React.FC = () => {
                     setDuration(preset);
                     setIsCustomDuration(false);
                   }}
-                  className={`py-2 px-2 rounded-xl text-xs font-semibold border transition-all text-center ${
+                  className={`py-2 px-2 rounded-xl text-xs font-semibold border transition-all text-center relative ${
                     !isCustomDuration && duration === preset
-                      ? "bg-emerald-500/20 border-emerald-500 text-emerald-300 font-bold"
-                      : "bg-[#161b26] border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200"
+                      ? "bg-emerald-500/20 border-emerald-500 text-emerald-300 font-bold shadow-sm shadow-emerald-950/40"
+                      : "bg-[#121722] border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200"
                   }`}
                 >
-                  {preset} min
+                  {preset}m
                 </button>
               ))}
 
@@ -123,54 +135,70 @@ export const NewEventPage: React.FC = () => {
                 onClick={() => setIsCustomDuration(true)}
                 className={`py-2 px-2 rounded-xl text-xs font-semibold border transition-all text-center ${
                   isCustomDuration
-                    ? "bg-emerald-500/20 border-emerald-500 text-emerald-300 font-bold"
-                    : "bg-[#161b26] border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200"
+                    ? "bg-emerald-500/20 border-emerald-500 text-emerald-300 font-bold shadow-sm shadow-emerald-950/40"
+                    : "bg-[#121722] border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200"
                 }`}
               >
                 Custom
               </button>
             </div>
 
-            {isCustomDuration && (
-              <div className="pt-2 flex items-center gap-2">
-                <input
-                  type="number"
-                  min={1}
-                  max={240}
-                  value={customDurationVal}
-                  onChange={(e) => setCustomDurationVal(e.target.value)}
-                  placeholder="Minutes"
-                  className="w-32 bg-[#161b26] border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono"
-                />
-                <span className="text-xs text-slate-400">minutes duration</span>
-              </div>
-            )}
+            <AnimatePresence>
+              {isCustomDuration && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="pt-2 flex items-center gap-3 overflow-hidden"
+                >
+                  <input
+                    type="number"
+                    min={1}
+                    max={240}
+                    value={customDurationVal}
+                    onChange={(e) => setCustomDurationVal(e.target.value)}
+                    placeholder="Minutes"
+                    className="w-28 bg-[#121722] border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono font-bold"
+                  />
+                  <span className="text-xs text-slate-400">minutes (between 1 and 240)</span>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
 
-          <div className="pt-1">
-            <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-300">
+          {/* Section 3: Attendee Settings */}
+          <div className="p-4 bg-[#090d14] rounded-2xl border border-slate-800/80">
+            <label className="flex items-start gap-3 cursor-pointer text-xs text-slate-300">
               <input
                 type="checkbox"
                 checked={requireName}
                 onChange={(e) => setRequireName(e.target.checked)}
-                className="w-4 h-4 rounded text-emerald-500 bg-slate-900 border-slate-700 focus:ring-emerald-500"
+                className="mt-0.5 w-4 h-4 rounded text-emerald-500 bg-[#121722] border-slate-700 focus:ring-emerald-500 cursor-pointer"
               />
-              <span>Require participants to provide a name before voting</span>
+              <div className="space-y-0.5">
+                <span className="font-semibold text-white">Require attendee name before joining</span>
+                <p className="text-[11px] text-slate-400">
+                  Participants provide their nickname to enter the waiting room and appear on the live leaderboard.
+                </p>
+              </div>
             </label>
           </div>
 
-          <div className="flex items-center justify-end gap-3 pt-2">
-            <button
+          {/* CTA Submit Button */}
+          <div className="pt-2">
+            <motion.button
+              whileHover={{ scale: 1.01 }}
+              whileTap={{ scale: 0.98 }}
               type="submit"
               disabled={creating}
-              className="flex items-center gap-2 px-6 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs shadow-lg shadow-emerald-950 transition-all active:scale-95 disabled:opacity-50"
+              className="w-full flex items-center justify-center gap-2 py-3.5 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-sm shadow-xl shadow-emerald-950/40 transition-all disabled:opacity-50"
             >
-              <span>{creating ? "Creating..." : "Create & Open Waiting Room"}</span>
-              <ArrowUpRight className="w-4 h-4" />
-            </button>
+              <span>{creating ? "Setting up Event..." : "Create & Open Waiting Lounge"}</span>
+              <ArrowUpRight className="w-4 h-4 stroke-[2.5]" />
+            </motion.button>
           </div>
         </form>
-      </div>
+      </motion.div>
     </div>
   );
 };

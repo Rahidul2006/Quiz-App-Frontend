@@ -26,7 +26,7 @@ export const QrCard: React.FC<QrCardProps> = ({
 
   return (
     <div
-      className={`bg-[#161b26] border border-slate-700/60 rounded-3xl p-5 flex flex-col items-center text-center shadow-xl ${className}`}
+      className={`bg-[#121722] border border-slate-800/90 rounded-3xl p-5 flex flex-col items-center text-center shadow-xl ${className}`}
     >
       <div className="bg-white p-3 rounded-2xl shadow-md mb-3 border-2 border-emerald-500/20">
         <QRCodeSVG value={joinUrl} size={size} level="M" />
@@ -39,7 +39,7 @@ export const QrCard: React.FC<QrCardProps> = ({
             {origin ? origin.replace(/^https?:\/\//, "") : "crowdpulse.app"}/join
           </p>
           <div className="pt-2">
-            <span className="text-2xl font-mono font-black tracking-wider text-white bg-slate-900 px-4 py-1 rounded-xl border border-slate-700/80 inline-block shadow-inner">
+            <span className="text-2xl font-mono font-black tracking-wider text-white bg-[#090d14] px-4 py-1 rounded-xl border border-slate-800 inline-block shadow-inner">
               #{joinCode}
             </span>
           </div>
