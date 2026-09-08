@@ -2,6 +2,7 @@ export type EventStatus =
   | 'WAITING'
   | 'LIVE'
   | 'ENDED'
+  | 'PAUSED'
   | 'waiting'
   | 'live'
   | 'ended'
@@ -60,11 +61,13 @@ export type ActivityStatus =
   | 'WAITING'
   | 'LIVE'
   | 'ENDED'
+  | 'PAUSED'
   | 'draft'
   | 'active'
   | 'ended'
   | 'waiting'
-  | 'live';
+  | 'live'
+  | 'paused';
 
 export type PollType =
   | 'single'
@@ -143,6 +146,10 @@ export interface Activity {
   ends_at?: string | null;
   stoppedAt?: string | null;
   stopped_at?: string | null;
+  pausedAt?: string | null;
+  paused_at?: string | null;
+  remainingSeconds?: number | null;
+  remaining_seconds?: number | null;
   orderIndex?: number;
   order_index?: number;
   settings: ActivitySettings;

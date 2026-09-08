@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { Users, Zap, Maximize2, Minimize2, Radio, ArrowLeft, Clock, Award, CheckCircle2 } from "lucide-react";
+import { Users, Zap, Maximize2, Minimize2, Radio, ArrowLeft, Clock, Award, CheckCircle2, Pause } from "lucide-react";
 import { api } from "../services/api";
 import { getSocket, joinEventRoom, leaveEventRoom } from "../services/socket";
 import { Activity, EventItem, PollOption, Participant } from "../types";
@@ -109,6 +109,19 @@ export const PresentationPage: React.FC = () => {
         setActiveActivity(null);
       });
 
+      socket.on("event:paused", () => {
+        setEvent((prev) => (prev ? { ...prev, status: "PAUSED" } : null));
+        setActiveActivity((prev) => (prev ? { ...prev, status: "PAUSED" } : null));
+      });
+
+      socket.on("event:resumed", (data: any) => {
+        setEvent((prev) => (prev ? { ...prev, status: "LIVE" } : null));
+        if (data?.activity) {
+          setActiveActivity(data.activity);
+        }
+        loadData();
+      });
+
       socket.on("participant:joined", (data: any) => {
         if (typeof data?.count === "number") {
           setParticipantCount(data.count);
@@ -138,6 +151,39 @@ export const PresentationPage: React.FC = () => {
 
       socket.on("activity:started", (data) => {
         setActiveActivity(data.activity);
+        loadData();
+      });
+
+      socket.on("activity:paused", (data: any) => {
+        if (data?.activity) {
+          setActiveActivity(data.activity);
+        } else {
+          setActiveActivity((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  status: "PAUSED",
+                  remainingSeconds: data?.remainingSeconds ?? prev.remainingSeconds,
+                }
+              : null
+          );
+        }
+      });
+
+      socket.on("activity:resumed", (data: any) => {
+        if (data?.activity) {
+          setActiveActivity(data.activity);
+        } else {
+          setActiveActivity((prev) =>
+            prev ? { ...prev, status: "LIVE", endsAt: data?.endsAt } : null
+          );
+        }
+      });
+
+      socket.on("activity:restarted", (data: any) => {
+        if (data?.activity) {
+          setActiveActivity(data.activity);
+        }
         loadData();
       });
 
@@ -172,9 +218,14 @@ export const PresentationPage: React.FC = () => {
         leaveEventRoom(eventId);
         socket.off("event:started");
         socket.off("event:ended");
+        socket.off("event:paused");
+        socket.off("event:resumed");
         socket.off("participant:joined");
         socket.off("participants:updated");
         socket.off("activity:started");
+        socket.off("activity:paused");
+        socket.off("activity:resumed");
+        socket.off("activity:restarted");
         socket.off("activity:closed");
         socket.off("poll:results_updated");
         socket.off("wordcloud:updated");
@@ -197,6 +248,9 @@ export const PresentationPage: React.FC = () => {
 
   const getActivityRemainingSeconds = () => {
     if (!activeActivity) return null;
+    if (activeActivity.status === "PAUSED" || activeActivity.status === "paused") {
+      return typeof activeActivity.remainingSeconds === "number" ? activeActivity.remainingSeconds : 0;
+    }
     const endsAtValue = activeActivity.endsAt || (activeActivity as any).ends_at;
     if (!endsAtValue) return null;
     return Math.max(0, Math.ceil((new Date(endsAtValue).getTime() - nowTimestamp) / 1000));
@@ -220,11 +274,13 @@ export const PresentationPage: React.FC = () => {
   const joinCode = event.joinCode || event.join_code || "";
   const isWaiting = event.status === "WAITING" || event.status === "draft";
   const isEnded = event.status === "ENDED" || event.status === "ended";
+  const isPaused = event.status === "PAUSED" || event.status === "paused";
+  const isActPaused = activeActivity?.status === "PAUSED" || activeActivity?.status === "paused";
 
   const actRemaining = activeActivity ? getActivityRemainingSeconds() : null;
   const actTotalDur = activeActivity?.duration || 30;
   const actProgressPct = actRemaining !== null ? Math.max(0, Math.min(100, (actRemaining / actTotalDur) * 100)) : 0;
-  const actIsUrgent = actRemaining !== null && actRemaining <= 10 && actRemaining > 0;
+  const actIsUrgent = actRemaining !== null && !isActPaused && actRemaining <= 10 && actRemaining > 0;
 
   return (
     <div className="min-h-screen bg-[#080c14] text-white flex flex-col justify-between select-none overflow-hidden font-sans selection:bg-emerald-500/30 selection:text-emerald-300 relative">
@@ -256,6 +312,11 @@ export const PresentationPage: React.FC = () => {
               <span className="w-2 h-2 rounded-full bg-rose-400" />
               <span>Event Ended</span>
             </div>
+          ) : isPaused ? (
+            <div className="flex items-center gap-2 bg-amber-500/15 border border-amber-500/40 px-3.5 py-1 rounded-full text-xs font-mono font-bold uppercase tracking-wider text-amber-400 shadow-sm shadow-amber-950/20">
+              <Pause className="w-3 h-3 text-amber-400" />
+              <span>Event Paused</span>
+            </div>
           ) : (
             <div className="flex items-center gap-2 bg-emerald-500/15 border border-emerald-500/30 px-3.5 py-1 rounded-full text-xs font-mono font-bold uppercase tracking-wider text-emerald-400">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
@@ -275,13 +336,21 @@ export const PresentationPage: React.FC = () => {
           {activeActivity && actRemaining !== null && !isWaiting && !isEnded && (
             <div
               className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl font-mono text-sm font-bold border transition-colors ${
-                actIsUrgent
+                isActPaused
+                  ? "bg-amber-500/15 text-amber-300 border-amber-500/40 shadow-md shadow-amber-950/20"
+                  : actIsUrgent
                   ? "bg-rose-500/20 text-rose-300 border-rose-500/40 animate-pulse shadow-md shadow-rose-950/30"
                   : "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
               }`}
             >
-              <Clock className={`w-4 h-4 ${actIsUrgent ? "text-rose-400" : "text-emerald-400"}`} />
-              <span className="tabular-nums">{formatSeconds(actRemaining)}</span>
+              {isActPaused ? (
+                <Pause className="w-4 h-4 text-amber-400" />
+              ) : (
+                <Clock className={`w-4 h-4 ${actIsUrgent ? "text-rose-400" : "text-emerald-400"}`} />
+              )}
+              <span className="tabular-nums">
+                {isActPaused ? `PAUSED (${formatSeconds(actRemaining)})` : formatSeconds(actRemaining)}
+              </span>
             </div>
           )}
 
@@ -440,10 +509,17 @@ export const PresentationPage: React.FC = () => {
                 <div className="bg-[#121722]/95 border border-slate-800/90 rounded-3xl p-5 sm:p-6 shadow-2xl backdrop-blur-md flex items-center justify-between gap-4">
                   <div className="space-y-1">
                     <div className="flex items-center gap-2.5">
-                      <span className="text-xs font-mono font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                        LIVE ACTIVITY
-                      </span>
+                      {isActPaused ? (
+                        <span className="text-xs font-mono font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30 flex items-center gap-2">
+                          <Pause className="w-3 h-3 text-amber-400" />
+                          ACTIVITY PAUSED
+                        </span>
+                      ) : (
+                        <span className="text-xs font-mono font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                          LIVE ACTIVITY
+                        </span>
+                      )}
                       <span className="text-xs font-mono font-semibold text-slate-400 capitalize">
                         {activeActivity.type.replace("_", " ")}
                       </span>
@@ -455,13 +531,19 @@ export const PresentationPage: React.FC = () => {
 
                   {actRemaining !== null && (
                     <div className={`flex items-center gap-3 px-5 sm:px-6 py-2.5 sm:py-3 rounded-2xl font-mono border transition-all ${
-                      actIsUrgent
+                      isActPaused
+                        ? "bg-amber-500/10 border-amber-500/40 text-amber-300 shadow-lg shadow-amber-950/20"
+                        : actIsUrgent
                         ? "bg-rose-500/20 border-rose-500/50 text-rose-300 animate-pulse shadow-xl shadow-rose-950/40"
                         : "bg-[#090d14] border-emerald-500/40 text-emerald-300 shadow-inner"
                     }`}>
-                      <Clock className={`w-5 h-5 sm:w-6 sm:h-6 ${actIsUrgent ? "text-rose-400 animate-bounce" : "text-emerald-400"}`} />
+                      {isActPaused ? (
+                        <Pause className="w-5 h-5 sm:w-6 sm:h-6 text-amber-400" />
+                      ) : (
+                        <Clock className={`w-5 h-5 sm:w-6 sm:h-6 ${actIsUrgent ? "text-rose-400 animate-bounce" : "text-emerald-400"}`} />
+                      )}
                       <span className="text-2xl sm:text-3xl lg:text-4xl font-black tracking-widest tabular-nums">
-                        {formatSeconds(actRemaining)}
+                        {isActPaused ? `PAUSED` : formatSeconds(actRemaining)}
                       </span>
                     </div>
                   )}
@@ -505,20 +587,26 @@ export const PresentationPage: React.FC = () => {
               </div>
             ) : (
               <div className="text-center max-w-xl mx-auto space-y-6 py-12">
-                <div className="w-20 h-20 rounded-3xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto shadow-2xl">
-                  <Radio className="w-10 h-10 animate-pulse" />
+                <div className={`w-20 h-20 rounded-3xl ${isPaused ? "bg-amber-500/10 border border-amber-500/20 text-amber-400" : "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400"} flex items-center justify-center mx-auto shadow-2xl`}>
+                  {isPaused ? <Pause className="w-10 h-10 animate-pulse" /> : <Radio className="w-10 h-10 animate-pulse" />}
                 </div>
 
                 <div className="space-y-2">
                   <h2 className="text-3xl sm:text-4xl font-black text-white tracking-tight">
-                    Waiting for Next Activity
+                    {isPaused ? "Event is Paused" : "Waiting for Next Activity"}
                   </h2>
                   <p className="text-base text-slate-400 max-w-md mx-auto">
-                    Scan the QR code on the left or join using code{" "}
-                    <span className="font-mono text-emerald-400 font-bold">
-                      #{joinCode}
-                    </span>{" "}
-                    to participate from your phone.
+                    {isPaused ? (
+                      "The host has temporarily paused the event session. Please hold on."
+                    ) : (
+                      <>
+                        Scan the QR code on the left or join using code{" "}
+                        <span className="font-mono text-emerald-400 font-bold">
+                          #{joinCode}
+                        </span>{" "}
+                        to participate from your phone.
+                      </>
+                    )}
                   </p>
                 </div>
               </div>
@@ -530,8 +618,8 @@ export const PresentationPage: React.FC = () => {
       {/* Projector Footer ticker */}
       <footer className="px-8 py-3 border-t border-slate-800/80 bg-[#0c1017]/90 backdrop-blur-md flex items-center justify-between text-xs text-slate-400 font-medium z-20">
         <span className="flex items-center gap-2">
-          <span className={`w-2 h-2 rounded-full ${isWaiting ? "bg-amber-400 animate-pulse" : isEnded ? "bg-rose-400" : "bg-emerald-500"}`} />
-          <span>CrowdPulse Live Interactive Stage {isWaiting ? "(Waiting Room)" : isEnded ? "(Concluded)" : "(Live)"}</span>
+          <span className={`w-2 h-2 rounded-full ${isWaiting ? "bg-amber-400 animate-pulse" : isEnded ? "bg-rose-400" : isPaused ? "bg-amber-400" : "bg-emerald-500"}`} />
+          <span>CrowdPulse Live Interactive Stage {isWaiting ? "(Waiting Room)" : isEnded ? "(Concluded)" : isPaused ? "(Paused)" : "(Live)"}</span>
         </span>
         <span className="font-mono text-slate-400">
           Join URL: <span className="text-emerald-400 font-bold">{window.location.origin}/join/{joinCode}</span>
