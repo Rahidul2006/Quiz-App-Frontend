@@ -17,6 +17,7 @@ import {
   Trash2,
   AlertTriangle,
   Sparkles,
+  Scale,
 } from "lucide-react";
 import { api } from "../services/api";
 import { useAuth } from "../context/AuthContext";
@@ -131,6 +132,14 @@ export const DashboardPage: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-3">
+            <Link
+              to="/dashboard/judging"
+              className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 font-bold text-xs transition-all shadow-sm"
+            >
+              <Scale className="w-4 h-4 text-indigo-400" />
+              <span>Judging & Hackathons</span>
+            </Link>
+
             <motion.button
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.97 }}
