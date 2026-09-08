@@ -493,24 +493,29 @@ export const EventManagementPage: React.FC = () => {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full space-y-8">
         {/* STATE 1: WAITING ROOM HERO */}
         {isWaiting && (
-          <div className="bg-gradient-to-r from-amber-950/30 via-[#161e29] to-[#121722] border-2 border-amber-500/40 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6">
+          <div className="bg-gradient-to-br from-amber-950/40 via-[#161e29] to-[#0f141f] border-2 border-amber-500/40 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6">
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
               <div className="space-y-2 max-w-xl">
-                <span className="inline-flex items-center gap-2 text-xs font-bold tracking-wider uppercase text-amber-400">
-                  <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping" />
-                  Waiting Room Active
-                </span>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[11px] font-mono uppercase tracking-widest text-emerald-400 font-bold bg-emerald-950/60 px-2.5 py-0.5 rounded-full border border-emerald-500/30">
+                    EVENT READY
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 text-xs font-bold tracking-wider uppercase text-amber-400 bg-amber-950/60 px-3 py-0.5 rounded-full border border-amber-500/30">
+                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                    🟡 WAITING TO START
+                  </span>
+                </div>
                 <h2 className="text-2xl sm:text-3xl font-black text-white">
-                  Waiting for Host to Start
+                  {event.title}
                 </h2>
                 <p className="text-xs sm:text-sm text-slate-300">
-                  Participants can join and see their names live on screen. Configure event duration and launch when you're ready!
+                  Participants are joining in real time. The timer will start only when you launch the event.
                 </p>
               </div>
 
-              <div className="flex flex-wrap items-center gap-3">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
                 <div className="flex items-center gap-2 bg-[#0c1017] border border-slate-700/80 rounded-2xl px-3.5 py-2.5 text-xs text-slate-300 shadow-inner">
-                  <Clock className="w-4 h-4 text-amber-400" />
+                  <Clock className="w-4 h-4 text-amber-400 flex-shrink-0" />
                   <span className="font-semibold text-slate-400">Duration:</span>
                   <select
                     value={eventDuration}
@@ -530,7 +535,7 @@ export const EventManagementPage: React.FC = () => {
                 <button
                   onClick={handleStartEvent}
                   disabled={startingEvent}
-                  className="flex items-center gap-2 px-6 py-3.5 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-sm shadow-xl shadow-emerald-950/60 transition-all active:scale-95 disabled:opacity-50"
+                  className="flex items-center justify-center gap-2 px-8 py-3.5 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-sm shadow-xl shadow-emerald-950/70 transition-all active:scale-95 disabled:opacity-50"
                 >
                   <Play className="w-4 h-4 fill-current" />
                   <span>{startingEvent ? "Starting Event..." : "▶ START EVENT"}</span>
@@ -538,10 +543,10 @@ export const EventManagementPage: React.FC = () => {
 
                 <button
                   onClick={() => setShowQrModal(true)}
-                  className="flex items-center gap-2 px-4 py-3.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-colors"
+                  className="flex items-center justify-center gap-2 px-4 py-3.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-colors"
                 >
                   <QrCode className="w-4 h-4 text-emerald-400" />
-                  <span>Show QR</span>
+                  <span>QR Code</span>
                 </button>
               </div>
             </div>
@@ -551,10 +556,10 @@ export const EventManagementPage: React.FC = () => {
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-bold text-white flex items-center gap-2">
                   <Users className="w-4 h-4 text-cyan-400" />
-                  <span>Live Participant Cloud</span>
+                  <span>Live Participant Cloud ({participants.length})</span>
                 </h3>
                 <span className="text-xs font-mono font-bold text-slate-400">
-                  {participants.length} {participants.length === 1 ? "participant" : "participants"} joined
+                  Join Code: <strong className="text-emerald-400">#{joinCode}</strong>
                 </span>
               </div>
               <ParticipantNameCloud

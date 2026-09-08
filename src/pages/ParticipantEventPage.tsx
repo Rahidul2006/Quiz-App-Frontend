@@ -110,6 +110,28 @@ export const ParticipantEventPage: React.FC = () => {
           const res = await api.get(`/activities/${activeActId}/results`);
           if (act.type === "poll") {
             setPollResults({ options: res.options || [], total: res.total || 0 });
+
+            // Restore voted status from persistent database and local cache
+            const pId = currentPart?.id || (currentPart as any)?._id;
+            if (pId) {
+              const cachedVote = localStorage.getItem(`crowdpulse_poll_voted_${activeActId}_${pId}`);
+              if (cachedVote) {
+                setHasVotedPoll(true);
+                setSelectedPollOption(cachedVote);
+              }
+              try {
+                const voteCheck = await api.get(`/activities/${activeActId}/participant-response?participantId=${pId}`);
+                if (voteCheck.hasVoted) {
+                  setHasVotedPoll(true);
+                  if (voteCheck.optionId) {
+                    setSelectedPollOption(voteCheck.optionId);
+                    localStorage.setItem(`crowdpulse_poll_voted_${activeActId}_${pId}`, voteCheck.optionId);
+                  }
+                }
+              } catch (err) {
+                // Ignore query failure
+              }
+            }
           } else {
             setWordCloudList(res.words || []);
           }
@@ -181,8 +203,16 @@ export const ParticipantEventPage: React.FC = () => {
 
       socket.on("activity:started", (data) => {
         setActiveActivity(data.activity);
-        setHasVotedPoll(false);
-        setSelectedPollOption(null);
+        const pId = participant?.id || (participant as any)?._id;
+        const newActId = data.activity.id || data.activity._id;
+        const cachedVote = pId ? localStorage.getItem(`crowdpulse_poll_voted_${newActId}_${pId}`) : null;
+        if (cachedVote) {
+          setHasVotedPoll(true);
+          setSelectedPollOption(cachedVote);
+        } else {
+          setHasVotedPoll(false);
+          setSelectedPollOption(null);
+        }
         setHasSubmittedQuiz(false);
         setSelectedQuizOption(null);
         loadData();
@@ -302,12 +332,16 @@ export const ParticipantEventPage: React.FC = () => {
     if (!selectedPollOption || !activeActivity || !participant) return;
     try {
       const actId = activeActivity.id || activeActivity._id;
+      const pId = participant.id || participant._id;
       const res = await api.post(`/activities/${actId}/respond`, {
         optionId: selectedPollOption,
-        participantId: participant.id || participant._id,
+        participantId: pId,
         participantName: participant.name,
       });
       setHasVotedPoll(true);
+      if (pId) {
+        localStorage.setItem(`crowdpulse_poll_voted_${actId}_${pId}`, selectedPollOption);
+      }
       setPollResults({ options: res.options, total: res.total });
     } catch (e) {
       console.error("Vote failed", e);
@@ -329,7 +363,7 @@ export const ParticipantEventPage: React.FC = () => {
       setShowWordInputModal(false);
       setWordCloudList(res.words);
     } catch (e) {
-      console.error("Word submit failed", e);
+      console.error("Word cloud response error", e);
     } finally {
       setSubmittingWord(false);
     }
@@ -408,7 +442,10 @@ export const ParticipantEventPage: React.FC = () => {
               {isLive && remainingSeconds !== null && (
                 <>
                   <span>•</span>
-                  <span className="text-emerald-400 font-bold">⏱ {formatTimer(remainingSeconds)}</span>
+                  <span className="text-emerald-400 font-bold flex items-center gap-1">
+                    <Clock className="w-2.5 h-2.5" />
+                    {formatTimer(remainingSeconds)}
+                  </span>
                 </>
               )}
               {isEnded && (
@@ -425,8 +462,7 @@ export const ParticipantEventPage: React.FC = () => {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowQrModal(true)}
-            className="p-2 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-emerald-400 border border-slate-700 transition-colors active:scale-95 shadow-sm"
-            aria-label="Open Event QR Code"
+            className="p-2 text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-xl hover:bg-emerald-500/20 transition-all active:scale-95"
             title="Event QR Code"
           >
             <QrCode className="w-4 h-4" />
@@ -445,38 +481,49 @@ export const ParticipantEventPage: React.FC = () => {
       <main className="flex-1 p-4 pb-20 flex flex-col justify-center">
         {/* CASE 1: WAITING ROOM */}
         {isWaiting && (
-          <div className="space-y-5 my-auto animate-in fade-in duration-300">
-            <div className="text-center space-y-2.5">
-              <div className="w-14 h-14 rounded-3xl bg-amber-500/10 border border-amber-500/30 text-amber-400 flex items-center justify-center mx-auto shadow-xl">
-                <Clock className="w-7 h-7 animate-pulse" />
+          <div className="space-y-6 my-auto animate-in fade-in duration-300">
+            <div className="text-center space-y-3">
+              <div className="w-16 h-16 rounded-3xl bg-amber-500/10 border border-amber-500/30 text-amber-400 flex items-center justify-center mx-auto shadow-xl">
+                <Clock className="w-8 h-8 animate-pulse" />
               </div>
 
-              <div className="space-y-1">
-                <span className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-400 bg-amber-950/40 px-3 py-0.5 rounded-full border border-amber-500/30">
+              <div className="space-y-1.5">
+                <span className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-400 bg-amber-950/40 px-3 py-1 rounded-full border border-amber-500/30">
                   <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
-                  WAITING FOR THE HOST
+                  🟡 WAITING FOR HOST
                 </span>
-                <h2 className="text-xl sm:text-2xl font-black text-white">
-                  The event hasn&apos;t started yet.
+                <h2 className="text-2xl font-black text-white">
+                  {event.title}
                 </h2>
-                <p className="text-xs text-slate-300 max-w-xs mx-auto">
-                  You&apos;re successfully joined. <strong>{participantCount} {participantCount === 1 ? "person" : "people"}</strong> are already here. Waiting for the host to start...
+                <p className="text-xs sm:text-sm text-slate-300 max-w-xs mx-auto">
+                  The event will begin when the host starts it.
                 </p>
               </div>
 
-              <div className="p-2.5 bg-[#161b26] border border-slate-800 rounded-2xl inline-flex items-center gap-2 text-xs text-slate-300">
+              <div className="flex items-center justify-center gap-2 pt-1">
+                <div className="px-3 py-1.5 bg-[#161b26] border border-slate-800 rounded-xl text-xs text-slate-300 font-medium">
+                  Participants: <span className="font-bold text-cyan-400 font-mono">{participantCount}</span>
+                </div>
+                <div className="px-3 py-1.5 bg-[#161b26] border border-slate-800 rounded-xl text-xs text-slate-300 font-mono">
+                  Join Code: <span className="font-bold text-emerald-400">#{joinCode}</span>
+                </div>
+              </div>
+
+              <div className="p-2 bg-[#161b26]/70 border border-slate-800/80 rounded-2xl inline-flex items-center gap-2 text-xs text-slate-300">
                 <span className="w-2 h-2 rounded-full bg-emerald-400" />
                 <span>You joined as <strong className="text-white">{participant?.name}</strong></span>
               </div>
             </div>
 
-            {/* Live Participant Cloud */}
-            <ParticipantNameCloud
-              participants={participants}
-              currentParticipantName={participant?.name}
-              variant="participant"
-              emptyMessage="You are the first attendee in the waiting room!"
-            />
+            {/* Live Participant Name Cloud */}
+            <div className="space-y-2">
+              <ParticipantNameCloud
+                participants={participants}
+                currentParticipantName={participant?.name}
+                variant="participant"
+                emptyMessage="You are the first attendee in the waiting room!"
+              />
+            </div>
           </div>
         )}
 
