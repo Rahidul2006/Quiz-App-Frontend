@@ -8,6 +8,7 @@ import {
   Users,
   Plus,
   Play,
+  Pause,
   Square,
   Trash2,
   ExternalLink,
@@ -46,6 +47,11 @@ export const EventManagementPage: React.FC = () => {
   // Lifecycle & Activity timing states
   const [startingEvent, setStartingEvent] = useState(false);
   const [stoppingEvent, setStoppingEvent] = useState(false);
+  const [pausingEvent, setPausingEvent] = useState(false);
+  const [resumingEvent, setResumingEvent] = useState(false);
+  const [pausingActivityId, setPausingActivityId] = useState<string | null>(null);
+  const [resumingActivityId, setResumingActivityId] = useState<string | null>(null);
+  const [restartingActivityId, setRestartingActivityId] = useState<string | null>(null);
   const [showStopModal, setShowStopModal] = useState(false);
 
   // Authoritative activity timer ticker (1-second tick for live cards)
@@ -204,6 +210,16 @@ export const EventManagementPage: React.FC = () => {
         loadEventData();
       });
 
+      socket.on("event:paused", () => {
+        setEvent((prev) => (prev ? { ...prev, status: "PAUSED" } : null));
+        loadEventData();
+      });
+
+      socket.on("event:resumed", () => {
+        setEvent((prev) => (prev ? { ...prev, status: "LIVE" } : null));
+        loadEventData();
+      });
+
       socket.on("event:ended", (data) => {
         setEvent((prev) =>
           prev
@@ -233,6 +249,47 @@ export const EventManagementPage: React.FC = () => {
             return a;
           })
         );
+        loadEventData();
+      });
+
+      socket.on("activity:paused", (data) => {
+        if (data?.activityId) {
+          setActivities((prev) =>
+            prev.map((a) => {
+              const aId = a.id || (a as any)._id;
+              if (aId === data.activityId) {
+                return {
+                  ...a,
+                  status: "PAUSED",
+                  remainingSeconds: data.remainingSeconds,
+                  endsAt: null,
+                };
+              }
+              return a;
+            })
+          );
+        }
+        loadEventData();
+      });
+
+      socket.on("activity:resumed", (data) => {
+        const actId = data?.activity?.id || data?.activity?._id;
+        setEvent((prev) => (prev ? { ...prev, activeActivityId: actId } : null));
+        setActivities((prev) =>
+          prev.map((a) => {
+            const aId = a.id || (a as any)._id;
+            if (aId === actId) {
+              return { ...a, ...data.activity, status: "LIVE" };
+            }
+            return a;
+          })
+        );
+        loadEventData();
+      });
+
+      socket.on("activity:restarted", (data) => {
+        const actId = data?.activity?.id || data?.activity?._id;
+        setEvent((prev) => (prev ? { ...prev, activeActivityId: actId } : null));
         loadEventData();
       });
 
@@ -273,8 +330,13 @@ export const EventManagementPage: React.FC = () => {
         socket.off("participant:joined");
         socket.off("participants:updated");
         socket.off("event:started");
+        socket.off("event:paused");
+        socket.off("event:resumed");
         socket.off("event:ended");
         socket.off("activity:started");
+        socket.off("activity:paused");
+        socket.off("activity:resumed");
+        socket.off("activity:restarted");
         socket.off("activity:closed");
         socket.off("poll:results_updated");
         socket.off("wordcloud:updated");
@@ -299,6 +361,36 @@ export const EventManagementPage: React.FC = () => {
     }
   };
 
+  const handlePauseEvent = async () => {
+    if (!eventId) return;
+    setPausingEvent(true);
+    try {
+      const res = await api.post(`/events/${eventId}/pause`, {});
+      setEvent(res);
+      loadEventData();
+    } catch (e: any) {
+      console.error("Pause event error:", e);
+      alert(e.message || "Failed to pause event");
+    } finally {
+      setPausingEvent(false);
+    }
+  };
+
+  const handleResumeEvent = async () => {
+    if (!eventId) return;
+    setResumingEvent(true);
+    try {
+      const res = await api.post(`/events/${eventId}/resume`, {});
+      setEvent(res);
+      loadEventData();
+    } catch (e: any) {
+      console.error("Resume event error:", e);
+      alert(e.message || "Failed to resume event");
+    } finally {
+      setResumingEvent(false);
+    }
+  };
+
   const handleStopEvent = async () => {
     if (!eventId) return;
     setStoppingEvent(true);
@@ -316,6 +408,13 @@ export const EventManagementPage: React.FC = () => {
   };
 
   const getActivityRemainingSeconds = (act: Activity) => {
+    if (act.status === "PAUSED" || act.status === "paused") {
+      return typeof act.remainingSeconds === "number"
+        ? act.remainingSeconds
+        : typeof (act as any).remaining_seconds === "number"
+        ? (act as any).remaining_seconds
+        : act.duration || 30;
+    }
     const endsAtValue = act.endsAt || (act as any).ends_at;
     if (!endsAtValue) return null;
     const diff = Math.max(0, Math.ceil((new Date(endsAtValue).getTime() - nowTimestamp) / 1000));
@@ -343,6 +442,47 @@ export const EventManagementPage: React.FC = () => {
   const handleLaunch = async (activityId: string) => {
     await api.post(`/activities/${activityId}/launch`, {});
     loadEventData();
+  };
+
+  const handlePauseActivity = async (activityId: string) => {
+    setPausingActivityId(activityId);
+    try {
+      await api.post(`/activities/${activityId}/pause`, {});
+      loadEventData();
+    } catch (e: any) {
+      console.error("Pause activity error:", e);
+      alert(e.message || "Failed to pause activity");
+    } finally {
+      setPausingActivityId(null);
+    }
+  };
+
+  const handleResumeActivity = async (activityId: string) => {
+    setResumingActivityId(activityId);
+    try {
+      await api.post(`/activities/${activityId}/resume`, {});
+      loadEventData();
+    } catch (e: any) {
+      console.error("Resume activity error:", e);
+      alert(e.message || "Failed to resume activity");
+    } finally {
+      setResumingActivityId(null);
+    }
+  };
+
+  const handleRestartActivity = async (activityId: string) => {
+    if (confirm("Restart this activity? This will clear previous responses and restart the live countdown.")) {
+      setRestartingActivityId(activityId);
+      try {
+        await api.post(`/activities/${activityId}/restart`, {});
+        loadEventData();
+      } catch (e: any) {
+        console.error("Restart activity error:", e);
+        alert(e.message || "Failed to restart activity");
+      } finally {
+        setRestartingActivityId(null);
+      }
+    }
   };
 
   const handleStop = async (activityId: string) => {
@@ -430,6 +570,7 @@ export const EventManagementPage: React.FC = () => {
 
   const isWaiting = event.status === "WAITING" || event.status === "waiting" || event.status === "draft";
   const isLive = event.status === "LIVE" || event.status === "live" || event.status === "active";
+  const isPaused = event.status === "PAUSED" || event.status === "paused";
   const isEnded = event.status === "ENDED" || event.status === "ended";
 
   return (
@@ -463,6 +604,12 @@ export const EventManagementPage: React.FC = () => {
                   <span className="text-[11px] font-mono font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 flex items-center gap-1.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
                     EVENT LIVE
+                  </span>
+                )}
+                {isPaused && (
+                  <span className="text-[11px] font-mono font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/40 flex items-center gap-1.5">
+                    <Pause className="w-3 h-3 text-amber-400" />
+                    EVENT PAUSED
                   </span>
                 )}
                 {isEnded && (
@@ -575,6 +722,12 @@ export const EventManagementPage: React.FC = () => {
                     Event LIVE
                   </span>
                 )}
+                {isPaused && (
+                  <span className="text-xs sm:text-sm font-bold text-amber-400 flex items-center gap-1.5">
+                    <Pause className="w-3.5 h-3.5 text-amber-400" />
+                    Event Paused (On Hold)
+                  </span>
+                )}
                 {isEnded && (
                   <span className="text-xs sm:text-sm font-bold text-red-400 flex items-center gap-1.5">
                     <span className="w-2.5 h-2.5 rounded-full bg-red-400" />
@@ -588,6 +741,12 @@ export const EventManagementPage: React.FC = () => {
               <div className="flex items-center gap-2 bg-[#090d14] border border-emerald-500/30 px-3.5 py-1.5 rounded-2xl text-xs text-emerald-300 font-mono">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                 <span className="font-bold">Live Session Active</span>
+              </div>
+            )}
+            {isPaused && (
+              <div className="flex items-center gap-2 bg-[#090d14] border border-amber-500/40 px-3.5 py-1.5 rounded-2xl text-xs text-amber-300 font-mono">
+                <Pause className="w-3.5 h-3.5 text-amber-400" />
+                <span className="font-bold">Event Paused</span>
               </div>
             )}
           </div>
@@ -606,13 +765,47 @@ export const EventManagementPage: React.FC = () => {
             )}
 
             {isLive && (
-              <button
-                onClick={() => setShowStopModal(true)}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs sm:text-sm shadow-lg shadow-red-950/40 transition-all active:scale-95"
-              >
-                <Square className="w-4 h-4 fill-current" />
-                <span>STOP EVENT</span>
-              </button>
+              <>
+                <button
+                  onClick={handlePauseEvent}
+                  disabled={pausingEvent}
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-bold text-xs sm:text-sm border border-amber-500/40 shadow-lg shadow-amber-950/20 transition-all active:scale-95 disabled:opacity-50"
+                  title="Pause live event"
+                >
+                  <Pause className="w-4 h-4 fill-current" />
+                  <span>{pausingEvent ? "Pausing..." : "PAUSE EVENT"}</span>
+                </button>
+
+                <button
+                  onClick={() => setShowStopModal(true)}
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs sm:text-sm shadow-lg shadow-red-950/40 transition-all active:scale-95"
+                >
+                  <Square className="w-4 h-4 fill-current" />
+                  <span>STOP EVENT</span>
+                </button>
+              </>
+            )}
+
+            {isPaused && (
+              <>
+                <button
+                  onClick={handleResumeEvent}
+                  disabled={resumingEvent}
+                  className="flex items-center gap-2 px-6 py-2.5 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs sm:text-sm shadow-xl shadow-emerald-950/40 transition-all active:scale-95 disabled:opacity-50"
+                  title="Resume event to LIVE"
+                >
+                  <Play className="w-4 h-4 fill-current" />
+                  <span>{resumingEvent ? "Resuming..." : "RESUME EVENT"}</span>
+                </button>
+
+                <button
+                  onClick={() => setShowStopModal(true)}
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs sm:text-sm shadow-lg shadow-red-950/40 transition-all active:scale-95"
+                >
+                  <Square className="w-4 h-4 fill-current" />
+                  <span>STOP EVENT</span>
+                </button>
+              </>
             )}
           </div>
         </div>
@@ -672,14 +865,15 @@ export const EventManagementPage: React.FC = () => {
             <div className="space-y-3.5">
               {activities.map((activity) => {
                 const actId = activity.id || (activity as any)._id || "";
-                const isActLive = activity.status === "LIVE" || activity.status === "active" || actId === activeActId;
+                const isActPaused = activity.status === "PAUSED" || activity.status === "paused";
                 const isActEnded = activity.status === "ENDED" || activity.status === "ended";
-                const isActWaiting = !isActLive && !isActEnded;
+                const isActLive = !isActPaused && !isActEnded && (activity.status === "LIVE" || activity.status === "active" || actId === activeActId);
+                const isActWaiting = !isActLive && !isActPaused && !isActEnded;
 
-                const remaining = isActLive ? getActivityRemainingSeconds(activity) : null;
+                const remaining = (isActLive || isActPaused) ? getActivityRemainingSeconds(activity) : null;
                 const totalDur = activity.duration || 30;
                 const progressPct = remaining !== null ? Math.max(0, Math.min(100, (remaining / totalDur) * 100)) : 0;
-                const isUrgent = remaining !== null && remaining <= 10 && remaining > 0;
+                const isUrgent = isActLive && remaining !== null && remaining <= 10 && remaining > 0;
                 const anotherActivityIsLive = !!activeActId && activeActId !== actId;
 
                 return (
@@ -691,11 +885,16 @@ export const EventManagementPage: React.FC = () => {
                     className={`border rounded-2xl p-5 shadow-xl transition-all relative overflow-hidden ${
                       isActLive
                         ? "border-emerald-500/50 bg-[#101923] shadow-emerald-950/20 ring-1 ring-emerald-500/20"
+                        : isActPaused
+                        ? "border-amber-500/50 bg-[#171612] shadow-amber-950/20 ring-1 ring-amber-500/20"
                         : "bg-[#121722] border-slate-800/90 hover:border-slate-700/80"
                     }`}
                   >
                     {isActLive && (
                       <div className="absolute top-0 right-0 w-72 h-28 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none" />
+                    )}
+                    {isActPaused && (
+                      <div className="absolute top-0 right-0 w-72 h-28 bg-amber-500/10 rounded-full blur-2xl pointer-events-none" />
                     )}
 
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 relative z-10">
@@ -731,6 +930,13 @@ export const EventManagementPage: React.FC = () => {
                             <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-950/60 px-2.5 py-0.5 rounded-full border border-emerald-500/40 flex items-center gap-1.5">
                               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
                               LIVE
+                            </span>
+                          )}
+
+                          {isActPaused && (
+                            <span className="text-[10px] font-mono font-bold text-amber-400 bg-amber-950/60 px-2.5 py-0.5 rounded-full border border-amber-500/40 flex items-center gap-1.5">
+                              <Pause className="w-2.5 h-2.5 text-amber-400" />
+                              PAUSED
                             </span>
                           )}
 
@@ -776,6 +982,15 @@ export const EventManagementPage: React.FC = () => {
                           </div>
                         )}
 
+                        {isActPaused && (
+                          <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl border font-mono bg-amber-950/50 border-amber-500/40 text-amber-300">
+                            <Pause className="w-3.5 h-3.5 text-amber-400" />
+                            <span className="text-xs font-bold tabular-nums">
+                              {formatSeconds(remaining)}
+                            </span>
+                          </div>
+                        )}
+
                         <button
                           onClick={() => {
                             setSelectedResultActivityId(actId);
@@ -790,13 +1005,47 @@ export const EventManagementPage: React.FC = () => {
                         </button>
 
                         {isActLive ? (
-                          <button
-                            onClick={() => handleStop(actId)}
-                            className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-md shadow-rose-950/40 transition-all active:scale-95"
-                          >
-                            <Square className="w-3.5 h-3.5 fill-current" />
-                            <span>STOP ACTIVITY</span>
-                          </button>
+                          <>
+                            <button
+                              onClick={() => handlePauseActivity(actId)}
+                              disabled={pausingActivityId === actId}
+                              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-bold transition-all active:scale-95 disabled:opacity-50"
+                              title="Pause Activity"
+                            >
+                              <Pause className="w-3.5 h-3.5 fill-current" />
+                              <span>{pausingActivityId === actId ? "..." : "PAUSE"}</span>
+                            </button>
+
+                            <button
+                              onClick={() => handleStop(actId)}
+                              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-md shadow-rose-950/40 transition-all active:scale-95"
+                              title="Stop Activity"
+                            >
+                              <Square className="w-3.5 h-3.5 fill-current" />
+                              <span>STOP</span>
+                            </button>
+                          </>
+                        ) : isActPaused ? (
+                          <>
+                            <button
+                              onClick={() => handleResumeActivity(actId)}
+                              disabled={resumingActivityId === actId}
+                              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-black transition-all shadow-md shadow-emerald-950/30 active:scale-95 disabled:opacity-50"
+                              title="Resume Activity"
+                            >
+                              <Play className="w-3.5 h-3.5 fill-current" />
+                              <span>{resumingActivityId === actId ? "..." : "RESUME"}</span>
+                            </button>
+
+                            <button
+                              onClick={() => handleStop(actId)}
+                              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-md shadow-rose-950/40 transition-all active:scale-95"
+                              title="Stop Activity"
+                            >
+                              <Square className="w-3.5 h-3.5 fill-current" />
+                              <span>STOP</span>
+                            </button>
+                          </>
                         ) : isActWaiting ? (
                           <button
                             onClick={() => handleLaunch(actId)}
@@ -814,8 +1063,25 @@ export const EventManagementPage: React.FC = () => {
                             <span>START ACTIVITY</span>
                           </button>
                         ) : (
-                          <div className="text-xs font-mono font-semibold text-slate-400 px-2 py-1 bg-slate-900/60 rounded-lg border border-slate-800">
-                            ✓ Done
+                          /* isActEnded */
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => handleRestartActivity(actId)}
+                              disabled={anotherActivityIsLive || restartingActivityId === actId}
+                              title={
+                                anotherActivityIsLive
+                                  ? "Stop currently live activity before restarting this one"
+                                  : "Restart this activity fresh"
+                              }
+                              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/40 text-xs font-bold transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
+                            >
+                              <RefreshCw className={`w-3.5 h-3.5 ${restartingActivityId === actId ? "animate-spin" : ""}`} />
+                              <span>{restartingActivityId === actId ? "Restarting..." : "RESTART"}</span>
+                            </button>
+
+                            <div className="text-xs font-mono font-semibold text-slate-400 px-2 py-1 bg-slate-900/60 rounded-lg border border-slate-800">
+                              Done
+                            </div>
                           </div>
                         )}
 

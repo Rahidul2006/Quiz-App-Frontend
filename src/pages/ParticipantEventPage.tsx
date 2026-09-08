@@ -7,6 +7,7 @@ import {
   Users,
   Check,
   Clock,
+  Pause,
   Sparkles,
   X,
   Radio,
@@ -194,6 +195,16 @@ export const ParticipantEventPage: React.FC = () => {
         loadData();
       });
 
+      socket.on("event:paused", () => {
+        setEvent((prev) => (prev ? { ...prev, status: "PAUSED" } : null));
+        loadData();
+      });
+
+      socket.on("event:resumed", () => {
+        setEvent((prev) => (prev ? { ...prev, status: "LIVE" } : null));
+        loadData();
+      });
+
       socket.on("event:ended", (data) => {
         setEvent((prev) =>
           prev
@@ -223,6 +234,40 @@ export const ParticipantEventPage: React.FC = () => {
         }
         setHasSubmittedQuiz(false);
         setSelectedQuizOption(null);
+        loadData();
+      });
+
+      socket.on("activity:paused", (data) => {
+        setActiveActivity((prev) =>
+          prev
+            ? {
+                ...prev,
+                status: "PAUSED",
+                remainingSeconds: data?.remainingSeconds,
+                endsAt: null,
+              }
+            : null
+        );
+      });
+
+      socket.on("activity:resumed", (data) => {
+        setActiveActivity({ ...data.activity, status: "LIVE" });
+      });
+
+      socket.on("activity:restarted", (data) => {
+        const act = data.activity;
+        const pId = participant?.id || (participant as any)?._id;
+        const actId = act.id || act._id;
+        if (pId) {
+          localStorage.removeItem(`crowdpulse_poll_voted_${actId}_${pId}`);
+        }
+        setHasVotedPoll(false);
+        setSelectedPollOption(null);
+        setHasSubmittedQuiz(false);
+        setSelectedQuizOption(null);
+        setWordCloudList([]);
+        setPollResults({ options: [], total: 0 });
+        setActiveActivity({ ...act, status: "LIVE" });
         loadData();
       });
 
@@ -266,8 +311,13 @@ export const ParticipantEventPage: React.FC = () => {
         socket.off("participant:joined");
         socket.off("participants:updated");
         socket.off("event:started");
+        socket.off("event:paused");
+        socket.off("event:resumed");
         socket.off("event:ended");
         socket.off("activity:started");
+        socket.off("activity:paused");
+        socket.off("activity:resumed");
+        socket.off("activity:restarted");
         socket.off("activity:closed");
         socket.off("poll:results_updated");
         socket.off("wordcloud:updated");
@@ -280,6 +330,13 @@ export const ParticipantEventPage: React.FC = () => {
 
   const getActivityRemainingSeconds = () => {
     if (!activeActivity) return null;
+    if (activeActivity.status === "PAUSED" || activeActivity.status === "paused") {
+      return typeof activeActivity.remainingSeconds === "number"
+        ? activeActivity.remainingSeconds
+        : typeof (activeActivity as any).remaining_seconds === "number"
+        ? (activeActivity as any).remaining_seconds
+        : activeActivity.duration || 30;
+    }
     const endsAtValue = activeActivity.endsAt || (activeActivity as any).ends_at;
     if (!endsAtValue) return null;
     const diff = Math.max(0, Math.ceil((new Date(endsAtValue).getTime() - nowTimestamp) / 1000));
@@ -399,12 +456,14 @@ export const ParticipantEventPage: React.FC = () => {
 
   const isWaiting = event.status === "WAITING" || event.status === "waiting" || event.status === "draft";
   const isLive = event.status === "LIVE" || event.status === "live" || event.status === "active";
+  const isPaused = event.status === "PAUSED" || event.status === "paused";
   const isEnded = event.status === "ENDED" || event.status === "ended";
 
-  const actRemaining = isLive && activeActivity ? getActivityRemainingSeconds() : null;
+  const isActPaused = activeActivity?.status === "PAUSED" || activeActivity?.status === "paused";
+  const actRemaining = (isLive || isActPaused) && activeActivity ? getActivityRemainingSeconds() : null;
   const actTotalDur = activeActivity?.duration || 30;
   const actProgressPct = actRemaining !== null ? Math.max(0, Math.min(100, (actRemaining / actTotalDur) * 100)) : 0;
-  const actIsUrgent = actRemaining !== null && actRemaining <= 10 && actRemaining > 0;
+  const actIsUrgent = !isActPaused && actRemaining !== null && actRemaining <= 10 && actRemaining > 0;
 
   return (
     <div className="min-h-screen bg-[#080c14] flex flex-col justify-between max-w-md mx-auto relative shadow-2xl border-x border-slate-800/60 selection:bg-emerald-500/30 selection:text-emerald-300">
@@ -434,6 +493,15 @@ export const ParticipantEventPage: React.FC = () => {
                   <span className="text-emerald-400 font-bold flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
                     LIVE
+                  </span>
+                </>
+              )}
+              {isPaused && (
+                <>
+                  <span>•</span>
+                  <span className="text-amber-400 font-bold flex items-center gap-1">
+                    <Pause className="w-2.5 h-2.5 text-amber-400" />
+                    PAUSED
                   </span>
                 </>
               )}
@@ -516,7 +584,28 @@ export const ParticipantEventPage: React.FC = () => {
           </div>
         )}
 
-        {/* CASE 2: EVENT ENDED */}
+        {/* CASE 2: EVENT PAUSED */}
+        {isPaused && (
+          <div className="text-center space-y-5 my-auto animate-in fade-in duration-300">
+            <div className="w-16 h-16 rounded-3xl bg-amber-500/10 border border-amber-500/30 text-amber-400 flex items-center justify-center mx-auto shadow-xl">
+              <Pause className="w-8 h-8 animate-pulse" />
+            </div>
+
+            <div className="space-y-2">
+              <span className="text-xs font-bold uppercase tracking-wider text-amber-400 bg-amber-500/10 px-3 py-1 rounded-full border border-amber-500/30">
+                ⏸ Event Paused
+              </span>
+              <h2 className="text-2xl font-black text-white">
+                Session Is On Hold
+              </h2>
+              <p className="text-xs sm:text-sm text-slate-300 max-w-xs mx-auto">
+                The host has temporarily paused the event. Please keep this screen open — the session will resume shortly!
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* CASE 3: EVENT ENDED */}
         {isEnded && (
           <div className="text-center space-y-5 my-auto animate-in fade-in duration-300">
             <div className="w-16 h-16 rounded-3xl bg-red-500/10 border border-red-500/30 text-red-400 flex items-center justify-center mx-auto shadow-xl">
@@ -545,7 +634,7 @@ export const ParticipantEventPage: React.FC = () => {
           </div>
         )}
 
-        {/* CASE 3: LIVE EVENT — WAITING FOR FIRST/NEXT ACTIVITY */}
+        {/* CASE 4: LIVE EVENT — WAITING FOR FIRST/NEXT ACTIVITY */}
         {isLive && !activeActivity && (
           <div className="text-center space-y-5 my-auto animate-in fade-in duration-300">
             <div className="w-16 h-16 rounded-3xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto shadow-xl">
@@ -564,17 +653,24 @@ export const ParticipantEventPage: React.FC = () => {
           </div>
         )}
 
-        {/* CASE 4: LIVE POLL */}
+        {/* CASE 5: LIVE POLL */}
         {isLive && activeActivity && activeActivity.type === "poll" && (
           <div className="space-y-5 my-auto animate-in fade-in duration-300">
             {/* Prominent Activity Authoritative Timer Banner */}
             <div className="bg-[#121722] border border-slate-800 rounded-2xl p-3.5 shadow-lg space-y-2">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-2.5 py-0.5 rounded-full inline-flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-                    LIVE
-                  </span>
+                  {isActPaused ? (
+                    <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-amber-400 bg-amber-950/60 border border-amber-500/40 px-2.5 py-0.5 rounded-full inline-flex items-center gap-1.5">
+                      <Pause className="w-2.5 h-2.5 text-amber-400" />
+                      PAUSED
+                    </span>
+                  ) : (
+                    <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-2.5 py-0.5 rounded-full inline-flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                      LIVE
+                    </span>
+                  )}
                   <span className="text-xs font-semibold text-slate-300">
                     Live Poll
                   </span>
@@ -583,12 +679,18 @@ export const ParticipantEventPage: React.FC = () => {
                 {actRemaining !== null && (
                   <div
                     className={`flex items-center gap-1.5 px-3 py-1 rounded-xl border font-mono font-bold text-xs transition-all ${
-                      actIsUrgent
+                      isActPaused
+                        ? "bg-amber-950/50 border-amber-500/40 text-amber-300"
+                        : actIsUrgent
                         ? "bg-rose-500/20 border-rose-500/50 text-rose-300 animate-pulse shadow-sm shadow-rose-950/40"
                         : "bg-[#090d14] border-slate-700/80 text-emerald-300"
                     }`}
                   >
-                    <Clock className={`w-3.5 h-3.5 ${actIsUrgent ? "text-rose-400" : "text-emerald-400"}`} />
+                    {isActPaused ? (
+                      <Pause className="w-3.5 h-3.5 text-amber-400" />
+                    ) : (
+                      <Clock className={`w-3.5 h-3.5 ${actIsUrgent ? "text-rose-400" : "text-emerald-400"}`} />
+                    )}
                     <span className="tabular-nums">{formatSeconds(actRemaining)}</span>
                   </div>
                 )}
@@ -598,7 +700,11 @@ export const ParticipantEventPage: React.FC = () => {
                 <div className="w-full bg-slate-800/80 h-1.5 rounded-full overflow-hidden">
                   <div
                     className={`h-full transition-all duration-1000 ease-linear rounded-full ${
-                      actIsUrgent ? "bg-rose-500" : "bg-emerald-400"
+                      isActPaused
+                        ? "bg-amber-500"
+                        : actIsUrgent
+                        ? "bg-rose-500"
+                        : "bg-emerald-400"
                     }`}
                     style={{ width: `${actProgressPct}%` }}
                   />
@@ -636,13 +742,13 @@ export const ParticipantEventPage: React.FC = () => {
                       damping: 28,
                       mass: 0.8,
                     }}
-                    disabled={hasVotedPoll}
+                    disabled={hasVotedPoll || isActPaused}
                     onClick={() => setSelectedPollOption(optId)}
                     className={`w-full text-left p-4 rounded-2xl border transition-all relative overflow-hidden flex items-center justify-between ${
                       isSelected
                         ? "bg-emerald-950/60 border-emerald-500 text-white ring-1 ring-emerald-500/40 shadow-lg shadow-emerald-950/30"
                         : "bg-[#121722] border-slate-800/90 text-slate-200 hover:border-slate-700/80"
-                    } ${hasVotedPoll ? "cursor-default" : "active:scale-[0.99]"}`}
+                    } ${hasVotedPoll || isActPaused ? "cursor-default" : "active:scale-[0.99]"}`}
                   >
                     {/* Live progress background if participant has voted */}
                     {hasVotedPoll && (
@@ -700,10 +806,10 @@ export const ParticipantEventPage: React.FC = () => {
             {!hasVotedPoll ? (
               <button
                 onClick={handleVotePoll}
-                disabled={!selectedPollOption}
-                className="w-full py-3.5 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-sm transition-all shadow-lg shadow-emerald-950/40 active:scale-95 disabled:opacity-40"
+                disabled={!selectedPollOption || isActPaused}
+                className="w-full py-3.5 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-sm transition-all shadow-lg shadow-emerald-950/40 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                Submit Response
+                {isActPaused ? "Activity is Paused" : "Submit Response"}
               </button>
             ) : (
               <div className="p-3.5 bg-emerald-950/40 border border-emerald-500/30 rounded-2xl text-center space-y-1">
@@ -719,17 +825,24 @@ export const ParticipantEventPage: React.FC = () => {
           </div>
         )}
 
-        {/* CASE 3: WORD CLOUD */}
+        {/* CASE 6: WORD CLOUD */}
         {activeActivity && activeActivity.type === "word_cloud" && (
           <div className="space-y-5 my-auto animate-in fade-in duration-300">
             {/* Prominent Activity Authoritative Timer Banner */}
             <div className="bg-[#121722] border border-slate-800 rounded-2xl p-3.5 shadow-lg space-y-2">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-cyan-400 bg-cyan-950/60 border border-cyan-500/30 px-2.5 py-0.5 rounded-full inline-flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
-                    LIVE
-                  </span>
+                  {isActPaused ? (
+                    <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-amber-400 bg-amber-950/60 border border-amber-500/40 px-2.5 py-0.5 rounded-full inline-flex items-center gap-1.5">
+                      <Pause className="w-2.5 h-2.5 text-amber-400" />
+                      PAUSED
+                    </span>
+                  ) : (
+                    <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-cyan-400 bg-cyan-950/60 border border-cyan-500/30 px-2.5 py-0.5 rounded-full inline-flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
+                      LIVE
+                    </span>
+                  )}
                   <span className="text-xs font-semibold text-slate-300">
                     Word Cloud
                   </span>
@@ -738,12 +851,18 @@ export const ParticipantEventPage: React.FC = () => {
                 {actRemaining !== null && (
                   <div
                     className={`flex items-center gap-1.5 px-3 py-1 rounded-xl border font-mono font-bold text-xs transition-all ${
-                      actIsUrgent
+                      isActPaused
+                        ? "bg-amber-950/50 border-amber-500/40 text-amber-300"
+                        : actIsUrgent
                         ? "bg-rose-500/20 border-rose-500/50 text-rose-300 animate-pulse shadow-sm shadow-rose-950/40"
                         : "bg-[#090d14] border-slate-700/80 text-cyan-300"
                     }`}
                   >
-                    <Clock className={`w-3.5 h-3.5 ${actIsUrgent ? "text-rose-400" : "text-cyan-400"}`} />
+                    {isActPaused ? (
+                      <Pause className="w-3.5 h-3.5 text-amber-400" />
+                    ) : (
+                      <Clock className={`w-3.5 h-3.5 ${actIsUrgent ? "text-rose-400" : "text-cyan-400"}`} />
+                    )}
                     <span className="tabular-nums">{formatSeconds(actRemaining)}</span>
                   </div>
                 )}
@@ -753,7 +872,11 @@ export const ParticipantEventPage: React.FC = () => {
                 <div className="w-full bg-slate-800/80 h-1.5 rounded-full overflow-hidden">
                   <div
                     className={`h-full transition-all duration-1000 ease-linear rounded-full ${
-                      actIsUrgent ? "bg-rose-500" : "bg-cyan-400"
+                      isActPaused
+                        ? "bg-amber-500"
+                        : actIsUrgent
+                        ? "bg-rose-500"
+                        : "bg-cyan-400"
                     }`}
                     style={{ width: `${actProgressPct}%` }}
                   />
@@ -784,9 +907,10 @@ export const ParticipantEventPage: React.FC = () => {
 
             <button
               onClick={() => setShowWordInputModal(true)}
-              className="w-full py-3.5 rounded-2xl bg-[#121722] hover:bg-[#182030] text-white font-bold text-sm border border-slate-700/80 shadow-lg active:scale-95 transition-all"
+              disabled={isActPaused}
+              className="w-full py-3.5 rounded-2xl bg-[#121722] hover:bg-[#182030] text-white font-bold text-sm border border-slate-700/80 shadow-lg active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              Add response
+              {isActPaused ? "Activity is Paused" : "Add response"}
             </button>
           </div>
         )}
@@ -818,11 +942,17 @@ export const ParticipantEventPage: React.FC = () => {
                       </span>
 
                       <div className={`flex items-center gap-1.5 font-mono font-bold text-sm px-3 py-1 rounded-full border ${
-                        actIsUrgent || quizTimer <= 5
+                        isActPaused
+                          ? "bg-amber-950/50 border-amber-500/40 text-amber-300"
+                          : actIsUrgent || quizTimer <= 5
                           ? "bg-rose-500/20 text-rose-300 border-rose-500/50 animate-pulse"
                           : "bg-slate-800/80 text-slate-200 border-slate-700/60"
                       }`}>
-                        <Clock className={`w-3.5 h-3.5 ${actIsUrgent || quizTimer <= 5 ? "text-rose-400" : "text-cyan-400"}`} />
+                        {isActPaused ? (
+                          <Pause className="w-3.5 h-3.5 text-amber-400" />
+                        ) : (
+                          <Clock className={`w-3.5 h-3.5 ${actIsUrgent || quizTimer <= 5 ? "text-rose-400" : "text-cyan-400"}`} />
+                        )}
                         <span className="tabular-nums">
                           {actRemaining !== null ? formatSeconds(actRemaining) : `00:${quizTimer.toString().padStart(2, "0")}`}
                         </span>
@@ -842,13 +972,13 @@ export const ParticipantEventPage: React.FC = () => {
                         return (
                           <button
                             key={optId || idx}
-                            disabled={hasSubmittedQuiz || quizTimer === 0}
+                            disabled={hasSubmittedQuiz || quizTimer === 0 || isActPaused}
                             onClick={() => setSelectedQuizOption(optId)}
                             className={`w-full text-left p-4 rounded-2xl border transition-all flex items-center justify-between ${
                               isSelected
                                 ? "bg-purple-950/60 border-purple-500 text-white ring-1 ring-purple-500/50 shadow-lg shadow-purple-950/30"
                                 : "bg-[#121722] border-slate-800/90 text-slate-200 hover:border-slate-700/80"
-                            } ${(hasSubmittedQuiz || quizTimer === 0) ? "opacity-80" : "active:scale-[0.99]"}`}
+                            } ${(hasSubmittedQuiz || quizTimer === 0 || isActPaused) ? "opacity-80" : "active:scale-[0.99]"}`}
                           >
                             <div className="flex items-center gap-3">
                               <span className="w-6 h-6 rounded-lg bg-slate-800 text-slate-300 text-xs font-mono font-bold flex items-center justify-center border border-slate-700">
@@ -868,10 +998,10 @@ export const ParticipantEventPage: React.FC = () => {
                     {!hasSubmittedQuiz ? (
                       <button
                         onClick={handleAnswerQuiz}
-                        disabled={!selectedQuizOption || quizTimer === 0}
-                        className="w-full py-3.5 rounded-2xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-sm shadow-lg shadow-purple-950/40 active:scale-95 transition-all disabled:opacity-40"
+                        disabled={!selectedQuizOption || quizTimer === 0 || isActPaused}
+                        className="w-full py-3.5 rounded-2xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-sm shadow-lg shadow-purple-950/40 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                       >
-                        Submit Answer
+                        {isActPaused ? "Quiz is Paused" : "Submit Answer"}
                       </button>
                     ) : (
                       <div className="p-3 bg-purple-950/40 border border-purple-500/30 rounded-2xl text-center space-y-0.5">

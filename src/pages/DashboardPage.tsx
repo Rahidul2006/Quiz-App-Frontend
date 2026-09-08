@@ -18,6 +18,7 @@ import {
   AlertTriangle,
   Sparkles,
   Scale,
+  Pause,
 } from "lucide-react";
 import { api } from "../services/api";
 import { useAuth } from "../context/AuthContext";
@@ -268,6 +269,7 @@ export const DashboardPage: React.FC = () => {
                 const joinCode = ev.joinCode || ev.join_code || "";
                 const isLive = ev.status === "active" || ev.status === "LIVE" || ev.status === "live";
                 const isWaiting = ev.status === "WAITING" || ev.status === "waiting" || ev.status === "draft";
+                const isPaused = ev.status === "PAUSED" || ev.status === "paused";
                 const isEnded = ev.status === "ENDED" || ev.status === "ended";
 
                 return (
@@ -287,14 +289,17 @@ export const DashboardPage: React.FC = () => {
                           className={`text-[10px] font-mono font-bold uppercase tracking-wider px-2.5 py-1 rounded-full border ${
                             isLive
                               ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30 flex items-center gap-1.5"
+                              : isPaused
+                              ? "bg-amber-500/15 text-amber-300 border-amber-500/30 flex items-center gap-1.5"
                               : isWaiting
                               ? "bg-amber-500/10 text-amber-400 border-amber-500/30 flex items-center gap-1.5"
                               : "bg-slate-800 text-slate-400 border-slate-700"
                           }`}
                         >
                           {isLive && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
+                          {isPaused && <Pause className="w-2.5 h-2.5 text-amber-400" />}
                           {isWaiting && <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />}
-                          {isLive ? "Active" : isWaiting ? "Waiting Room" : "Ended"}
+                          {isLive ? "Active" : isPaused ? "Paused" : isWaiting ? "Waiting Room" : "Ended"}
                         </span>
 
                         <span className="text-xs font-mono font-bold text-slate-300 bg-slate-800/80 px-2.5 py-0.5 rounded-lg border border-slate-700/60">
