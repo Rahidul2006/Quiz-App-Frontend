@@ -109,7 +109,11 @@ export const JudgingAdminPage: React.FC = () => {
         setSelectedRoundId(data[0].id || data[0]._id);
       }
     } catch (err: any) {
-      setError(err.message || "Failed to load judging rounds");
+      console.error("[Judging] Failed to load judging rounds:", err);
+      const msg = err?.message && err.message !== "Request failed"
+        ? err.message
+        : "Unable to load judging rounds. Please check the server connection.";
+      setError(msg);
     }
   };
 
@@ -150,7 +154,11 @@ export const JudgingAdminPage: React.FC = () => {
         setResultsData(data);
       }
     } catch (err: any) {
-      setError(err.message || "Failed to load judging data");
+      console.error("[Judging] Failed to load judging data:", err);
+      const msg = err?.message && err.message !== "Request failed"
+        ? err.message
+        : "Unable to load judging data. Please check the server connection.";
+      setError(msg);
     } finally {
       setLoading(false);
     }

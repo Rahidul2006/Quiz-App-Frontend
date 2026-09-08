@@ -10,8 +10,9 @@ const handleResponse = async (res: Response, endpoint: string) => {
       localStorage.removeItem("crowdpulse_admin_token");
       localStorage.removeItem("crowdpulse_admin_user");
     }
-    const err = await res.json().catch(() => ({ message: "Request failed" }));
-    const error = new Error(err.message || `${endpoint} failed with status ${res.status}`) as any;
+    const err = await res.json().catch(() => null);
+    const message = err?.message || `${endpoint} failed with status ${res.status}${res.statusText ? ` (${res.statusText})` : ""}`;
+    const error = new Error(message) as any;
     error.status = res.status;
     throw error;
   }
@@ -34,6 +35,19 @@ export const api = {
     const token = getToken();
     const res = await fetch(`${API_BASE}${endpoint}`, {
       method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+    return handleResponse(res, endpoint);
+  },
+
+  async put(endpoint: string, body: any) {
+    const token = getToken();
+    const res = await fetch(`${API_BASE}${endpoint}`, {
+      method: "PUT",
       headers: {
         "Content-Type": "application/json",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
