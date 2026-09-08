@@ -14,8 +14,15 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(() => localStorage.getItem("crowdpulse_admin_token"));
+  const [user, setUser] = useState<User | null>(() => {
+    try {
+      const saved = localStorage.getItem("crowdpulse_admin_user");
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
   const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
@@ -26,12 +33,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       try {
         const data = await api.get("/auth/me");
-        setUser(data.user);
-      } catch (err) {
-        console.warn("Session check failed, clearing token");
-        localStorage.removeItem("crowdpulse_admin_token");
-        setToken(null);
-        setUser(null);
+        if (data && data.user) {
+          setUser(data.user);
+          localStorage.setItem("crowdpulse_admin_user", JSON.stringify(data.user));
+        }
+      } catch (err: any) {
+        // Only clear session if token is truly rejected (401 Unauthorized or 403 Forbidden)
+        if (err?.status === 401 || err?.status === 403) {
+          console.warn("Session token expired or invalid, logging out");
+          localStorage.removeItem("crowdpulse_admin_token");
+          localStorage.removeItem("crowdpulse_admin_user");
+          setToken(null);
+          setUser(null);
+        } else {
+          console.warn("Could not reach /auth/me during reload, maintaining local session:", err?.message);
+        }
       } finally {
         setLoading(false);
       }
@@ -42,6 +58,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = async (email: string, password: string) => {
     const data = await api.post("/auth/login", { email, password });
     localStorage.setItem("crowdpulse_admin_token", data.token);
+    if (data.user) {
+      localStorage.setItem("crowdpulse_admin_user", JSON.stringify(data.user));
+    }
     setToken(data.token);
     setUser(data.user);
   };
@@ -49,12 +68,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const register = async (fullName: string, email: string, password: string) => {
     const data = await api.post("/auth/register", { fullName, email, password });
     localStorage.setItem("crowdpulse_admin_token", data.token);
+    if (data.user) {
+      localStorage.setItem("crowdpulse_admin_user", JSON.stringify(data.user));
+    }
     setToken(data.token);
     setUser(data.user);
   };
 
   const logout = () => {
     localStorage.removeItem("crowdpulse_admin_token");
+    localStorage.removeItem("crowdpulse_admin_user");
     setToken(null);
     setUser(null);
   };

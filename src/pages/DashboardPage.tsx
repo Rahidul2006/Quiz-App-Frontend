@@ -275,7 +275,6 @@ export const DashboardPage: React.FC = () => {
 
                     <Link
                       to={`/events/${evId}/present`}
-                      target="_blank"
                       className="flex items-center justify-center gap-1 py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs transition-colors shadow-md shadow-emerald-950"
                     >
                       <Tv className="w-3.5 h-3.5" />

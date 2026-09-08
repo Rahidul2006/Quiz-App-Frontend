@@ -1,4 +1,13 @@
-export type EventStatus = 'draft' | 'active' | 'paused' | 'ended';
+export type EventStatus =
+  | 'WAITING'
+  | 'LIVE'
+  | 'ENDED'
+  | 'waiting'
+  | 'live'
+  | 'ended'
+  | 'draft'
+  | 'active'
+  | 'paused';
 
 export interface EventSettings {
   require_name?: boolean;
@@ -15,6 +24,13 @@ export interface EventItem {
   join_code?: string;
   status: EventStatus;
   theme?: string;
+  duration?: number; // In minutes, e.g. 30
+  startedAt?: string | null;
+  started_at?: string | null;
+  endsAt?: string | null;
+  ends_at?: string | null;
+  stoppedAt?: string | null;
+  stopped_at?: string | null;
   settings: EventSettings;
   activeActivityId?: string | null;
   active_activity_id?: string | null;

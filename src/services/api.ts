@@ -15,7 +15,9 @@ export const api = {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ message: "Request failed" }));
-      throw new Error(err.message || `GET ${endpoint} failed with ${res.status}`);
+      const error = new Error(err.message || `GET ${endpoint} failed with ${res.status}`) as any;
+      error.status = res.status;
+      throw error;
     }
     return res.json();
   },
@@ -32,7 +34,9 @@ export const api = {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ message: "Request failed" }));
-      throw new Error(err.message || `POST ${endpoint} failed with ${res.status}`);
+      const error = new Error(err.message || `POST ${endpoint} failed with ${res.status}`) as any;
+      error.status = res.status;
+      throw error;
     }
     return res.json();
   },
@@ -49,7 +53,9 @@ export const api = {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ message: "Request failed" }));
-      throw new Error(err.message || `PATCH ${endpoint} failed with ${res.status}`);
+      const error = new Error(err.message || `PATCH ${endpoint} failed with ${res.status}`) as any;
+      error.status = res.status;
+      throw error;
     }
     return res.json();
   },
@@ -65,7 +71,9 @@ export const api = {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ message: "Request failed" }));
-      throw new Error(err.message || `DELETE ${endpoint} failed with ${res.status}`);
+      const error = new Error(err.message || `DELETE ${endpoint} failed with ${res.status}`) as any;
+      error.status = res.status;
+      throw error;
     }
     return res.json();
   },

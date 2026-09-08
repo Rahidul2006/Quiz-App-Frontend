@@ -10,6 +10,10 @@ import {
   Square,
   Trash2,
   ExternalLink,
+  Clock,
+  AlertTriangle,
+  Radio,
+  CheckCircle2,
 } from "lucide-react";
 import { api } from "../services/api";
 import { getSocket, joinEventRoom, leaveEventRoom } from "../services/socket";
@@ -18,6 +22,7 @@ import { QrModal } from "../components/qr/QrModal";
 import { PollVisualizer } from "../components/activities/PollVisualizer";
 import { WordCloudVisualizer } from "../components/activities/WordCloudVisualizer";
 import { QuizArena } from "../components/activities/QuizArena";
+import { ParticipantNameCloud } from "../components/waiting/ParticipantNameCloud";
 
 export const EventManagementPage: React.FC = () => {
   const { eventId } = useParams<{ eventId: string }>();
@@ -28,6 +33,13 @@ export const EventManagementPage: React.FC = () => {
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [activeTab, setActiveTab] = useState<"activities" | "participants" | "results" | "settings">("activities");
   const [loading, setLoading] = useState(true);
+
+  // Lifecycle & Timer states
+  const [eventDuration, setEventDuration] = useState<number>(30);
+  const [startingEvent, setStartingEvent] = useState(false);
+  const [stoppingEvent, setStoppingEvent] = useState(false);
+  const [showStopModal, setShowStopModal] = useState(false);
+  const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
 
   // QR Modal
   const [showQrModal, setShowQrModal] = useState(false);
@@ -106,20 +118,52 @@ export const EventManagementPage: React.FC = () => {
       const socket = getSocket();
 
       socket.on("participant:joined", (data) => {
-        setParticipants((prev) => [data.participant, ...prev]);
+        setParticipants((prev) => {
+          if (prev.some((p) => (p.id || p._id) === (data.participant.id || data.participant._id))) {
+            return prev;
+          }
+          return [data.participant, ...prev];
+        });
       });
 
-      socket.on("participants:updated", (data) => {
-        // total count updated
+      socket.on("participants:updated", () => {
+        // Updated
+      });
+
+      socket.on("event:started", (data) => {
+        setEvent((prev) =>
+          prev
+            ? {
+                ...prev,
+                status: "LIVE",
+                startedAt: data.startedAt,
+                endsAt: data.endsAt,
+                duration: data.duration,
+              }
+            : null
+        );
+        loadEventData();
+      });
+
+      socket.on("event:ended", (data) => {
+        setEvent((prev) =>
+          prev
+            ? {
+                ...prev,
+                status: "ENDED",
+                stoppedAt: data.stoppedAt,
+              }
+            : null
+        );
       });
 
       socket.on("activity:started", (data) => {
-        setEvent((prev) => prev ? { ...prev, activeActivityId: data.activity.id } : null);
+        setEvent((prev) => (prev ? { ...prev, activeActivityId: data.activity.id } : null));
         loadEventData();
       });
 
       socket.on("activity:closed", () => {
-        setEvent((prev) => prev ? { ...prev, activeActivityId: null } : null);
+        setEvent((prev) => (prev ? { ...prev, activeActivityId: null } : null));
         loadEventData();
       });
 
@@ -143,6 +187,8 @@ export const EventManagementPage: React.FC = () => {
         leaveEventRoom(eventId);
         socket.off("participant:joined");
         socket.off("participants:updated");
+        socket.off("event:started");
+        socket.off("event:ended");
         socket.off("activity:started");
         socket.off("activity:closed");
         socket.off("poll:results_updated");
@@ -152,6 +198,70 @@ export const EventManagementPage: React.FC = () => {
       };
     }
   }, [eventId]);
+
+  // Countdown Timer Effect based on server endsAt
+  useEffect(() => {
+    const endsAtValue = event?.endsAt || (event as any)?.ends_at;
+    const isLive = event?.status === "LIVE" || event?.status === "live";
+
+    if (!event || !isLive || !endsAtValue) {
+      setRemainingSeconds(null);
+      return;
+    }
+
+    const updateRemaining = () => {
+      const ends = new Date(endsAtValue).getTime();
+      const now = Date.now();
+      const diffSec = Math.max(0, Math.floor((ends - now) / 1000));
+      setRemainingSeconds(diffSec);
+
+      if (diffSec <= 0) {
+        setEvent((prev) => (prev ? { ...prev, status: "ENDED" } : null));
+      }
+    };
+
+    updateRemaining();
+    const interval = setInterval(updateRemaining, 1000);
+    return () => clearInterval(interval);
+  }, [event?.status, event?.endsAt, (event as any)?.ends_at]);
+
+  const handleStartEvent = async () => {
+    if (!eventId) return;
+    setStartingEvent(true);
+    try {
+      const res = await api.post(`/events/${eventId}/start`, { duration: eventDuration });
+      setEvent(res);
+      loadEventData();
+    } catch (e: any) {
+      console.error("Start event error:", e);
+      alert(e.message || "Failed to start event");
+    } finally {
+      setStartingEvent(false);
+    }
+  };
+
+  const handleStopEvent = async () => {
+    if (!eventId) return;
+    setStoppingEvent(true);
+    try {
+      const res = await api.post(`/events/${eventId}/stop`, {});
+      setEvent(res);
+      setShowStopModal(false);
+      loadEventData();
+    } catch (e: any) {
+      console.error("Stop event error:", e);
+      alert(e.message || "Failed to stop event");
+    } finally {
+      setStoppingEvent(false);
+    }
+  };
+
+  const formatTimer = (totalSeconds: number | null) => {
+    if (totalSeconds === null || isNaN(totalSeconds)) return "--:--";
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+  };
 
   const activeActId = event?.activeActivityId || event?.active_activity_id;
   const activeActivity = activities.find((a: any) => (a.id || a._id) === activeActId);
@@ -234,6 +344,10 @@ export const EventManagementPage: React.FC = () => {
   const joinCode = event.joinCode || event.join_code || "";
   const evId = event.id || event._id || "";
 
+  const isWaiting = event.status === "WAITING" || event.status === "waiting" || event.status === "draft";
+  const isLive = event.status === "LIVE" || event.status === "live" || event.status === "active";
+  const isEnded = event.status === "ENDED" || event.status === "ended";
+
   return (
     <div className="min-h-screen bg-[#0c1017] flex flex-col">
       {/* Top Header */}
@@ -249,10 +363,32 @@ export const EventManagementPage: React.FC = () => {
 
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  LIVE EVENT
-                </span>
+                {isWaiting && (
+                  <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                    WAITING FOR START
+                  </span>
+                )}
+                {isLive && (
+                  <>
+                    <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                      EVENT LIVE
+                    </span>
+                    {remainingSeconds !== null && (
+                      <span className="text-xs font-mono font-bold text-emerald-300 bg-emerald-950/80 px-2.5 py-1 rounded-md border border-emerald-500/30 flex items-center gap-1">
+                        <Clock className="w-3.5 h-3.5" />
+                        {formatTimer(remainingSeconds)}
+                      </span>
+                    )}
+                  </>
+                )}
+                {isEnded && (
+                  <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-red-500/10 text-red-400 border border-red-500/30 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-red-400" />
+                    EVENT ENDED
+                  </span>
+                )}
                 <span className="text-xs font-mono font-bold text-slate-300 bg-slate-800 px-2 py-0.5 rounded-md border border-slate-700">
                   #{joinCode}
                 </span>
@@ -277,12 +413,32 @@ export const EventManagementPage: React.FC = () => {
               <span>Show QR</span>
             </button>
 
+            {isWaiting && (
+              <button
+                onClick={handleStartEvent}
+                disabled={startingEvent}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-black transition-all shadow-md shadow-emerald-950 active:scale-95 disabled:opacity-50"
+              >
+                <Play className="w-3.5 h-3.5 fill-current" />
+                <span>{startingEvent ? "Starting..." : "START EVENT"}</span>
+              </button>
+            )}
+
+            {isLive && (
+              <button
+                onClick={() => setShowStopModal(true)}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold transition-all shadow-md shadow-red-950 active:scale-95"
+              >
+                <Square className="w-3.5 h-3.5 fill-current" />
+                <span>Stop Event</span>
+              </button>
+            )}
+
             <Link
               to={`/events/${evId}/present`}
-              target="_blank"
-              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all shadow-md shadow-emerald-950 active:scale-95"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold transition-all border border-slate-700"
             >
-              <Tv className="w-4 h-4" />
+              <Tv className="w-4 h-4 text-emerald-400" />
               <span>Presentation Mode</span>
             </Link>
           </div>
@@ -335,59 +491,80 @@ export const EventManagementPage: React.FC = () => {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full space-y-8">
-        {activeActivity ? (
-          <div className="bg-gradient-to-r from-emerald-950/70 via-[#16222b] to-[#161b26] border-2 border-emerald-500/40 rounded-3xl p-6 shadow-2xl flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div className="space-y-1">
-              <span className="inline-flex items-center gap-2 text-xs font-bold tracking-wider uppercase text-emerald-400">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
-                Active Now on Audience Screens & Projector
-              </span>
-              <h2 className="text-xl sm:text-2xl font-extrabold text-white">
-                {activeActivity.type === "poll" && "📊 Poll: "}
-                {activeActivity.type === "word_cloud" && "☁ Word Cloud: "}
-                {activeActivity.type === "quiz" && "🏆 Quiz: "}
-                {activeActivity.title}
-              </h2>
-              <p className="text-xs text-slate-400">
-                Participants can currently submit responses from their phones.
-              </p>
+        {/* STATE 1: WAITING ROOM HERO */}
+        {isWaiting && (
+          <div className="bg-gradient-to-r from-amber-950/30 via-[#161e29] to-[#121722] border-2 border-amber-500/40 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+              <div className="space-y-2 max-w-xl">
+                <span className="inline-flex items-center gap-2 text-xs font-bold tracking-wider uppercase text-amber-400">
+                  <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping" />
+                  Waiting Room Active
+                </span>
+                <h2 className="text-2xl sm:text-3xl font-black text-white">
+                  Waiting for Host to Start
+                </h2>
+                <p className="text-xs sm:text-sm text-slate-300">
+                  Participants can join and see their names live on screen. Configure event duration and launch when you're ready!
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-2 bg-[#0c1017] border border-slate-700/80 rounded-2xl px-3.5 py-2.5 text-xs text-slate-300 shadow-inner">
+                  <Clock className="w-4 h-4 text-amber-400" />
+                  <span className="font-semibold text-slate-400">Duration:</span>
+                  <select
+                    value={eventDuration}
+                    onChange={(e) => setEventDuration(Number(e.target.value))}
+                    className="bg-transparent font-bold text-white focus:outline-none cursor-pointer"
+                  >
+                    <option value={5} className="bg-slate-900 text-white">5 minutes</option>
+                    <option value={10} className="bg-slate-900 text-white">10 minutes</option>
+                    <option value={15} className="bg-slate-900 text-white">15 minutes</option>
+                    <option value={20} className="bg-slate-900 text-white">20 minutes</option>
+                    <option value={30} className="bg-slate-900 text-white">30 minutes</option>
+                    <option value={45} className="bg-slate-900 text-white">45 minutes</option>
+                    <option value={60} className="bg-slate-900 text-white">60 minutes</option>
+                  </select>
+                </div>
+
+                <button
+                  onClick={handleStartEvent}
+                  disabled={startingEvent}
+                  className="flex items-center gap-2 px-6 py-3.5 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-sm shadow-xl shadow-emerald-950/60 transition-all active:scale-95 disabled:opacity-50"
+                >
+                  <Play className="w-4 h-4 fill-current" />
+                  <span>{startingEvent ? "Starting Event..." : "▶ START EVENT"}</span>
+                </button>
+
+                <button
+                  onClick={() => setShowQrModal(true)}
+                  className="flex items-center gap-2 px-4 py-3.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-colors"
+                >
+                  <QrCode className="w-4 h-4 text-emerald-400" />
+                  <span>Show QR</span>
+                </button>
+              </div>
             </div>
 
-            <div className="flex items-center gap-3">
-              <Link
-                to={`/events/${evId}/present`}
-                target="_blank"
-                className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-semibold text-xs border border-slate-700 transition-colors"
-              >
-                <Tv className="w-4 h-4 text-emerald-400" />
-                <span>Open Projector View</span>
-              </Link>
-
-              <button
-                onClick={() => handleStop(activeActivity.id || activeActivity._id || "")}
-                className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-red-600/90 hover:bg-red-500 text-white font-bold text-xs shadow-lg shadow-red-950 transition-colors active:scale-95"
-              >
-                <Square className="w-4 h-4 fill-current" />
-                <span>Stop Activity</span>
-              </button>
+            {/* Live Name Cloud in Waiting Room */}
+            <div className="space-y-3 pt-4 border-t border-slate-800/80">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Users className="w-4 h-4 text-cyan-400" />
+                  <span>Live Participant Cloud</span>
+                </h3>
+                <span className="text-xs font-mono font-bold text-slate-400">
+                  {participants.length} {participants.length === 1 ? "participant" : "participants"} joined
+                </span>
+              </div>
+              <ParticipantNameCloud
+                participants={participants}
+                variant="admin"
+                emptyMessage={`No participants have joined yet. Scan QR code or share #${joinCode} to join!`}
+              />
             </div>
-          </div>
-        ) : (
-          <div className="bg-[#161b26]/70 border border-dashed border-slate-800 rounded-2xl p-4 flex items-center justify-between text-xs text-slate-400">
-            <div className="flex items-center gap-2">
-              <span>No activity currently launched. Launch an activity below to start receiving votes.</span>
-            </div>
-            <Link
-              to={`/events/${evId}/present`}
-              target="_blank"
-              className="text-emerald-400 hover:underline flex items-center gap-1 font-semibold"
-            >
-              <span>Preview presentation</span>
-              <ExternalLink className="w-3 h-3" />
-            </Link>
           </div>
         )}
-
         {/* TAB 1: ACTIVITIES */}
         {activeTab === "activities" && (
           <div className="space-y-6">
@@ -799,6 +976,45 @@ export const EventManagementPage: React.FC = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* STOP EVENT CONFIRMATION MODAL */}
+      {showStopModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-[#161b26] border border-slate-700 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl space-y-6">
+            <div className="flex items-center gap-3 text-red-400">
+              <div className="w-12 h-12 rounded-2xl bg-red-950/80 border border-red-500/30 flex items-center justify-center">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-white">End This Event?</h3>
+                <p className="text-xs text-slate-400">This will stop all activities and close voting.</p>
+              </div>
+            </div>
+
+            <p className="text-sm text-slate-300">
+              Are you sure you want to end <strong className="text-white">"{event.title}"</strong>? All connected participants and presentation screens will transition to the Event Ended screen.
+            </p>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowStopModal(false)}
+                className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleStopEvent}
+                disabled={stoppingEvent}
+                className="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs shadow-lg shadow-red-950 transition-colors active:scale-95 disabled:opacity-50"
+              >
+                {stoppingEvent ? "Ending..." : "End Event Now"}
+              </button>
+            </div>
           </div>
         </div>
       )}

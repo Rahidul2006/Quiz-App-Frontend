@@ -1,5 +1,6 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useMemo } from "react";
 import { useParams } from "react-router-dom";
+import { motion } from "framer-motion";
 import {
   Menu,
   QrCode,
@@ -8,6 +9,8 @@ import {
   Clock,
   Sparkles,
   X,
+  Radio,
+  Trophy,
 } from "lucide-react";
 import { api } from "../services/api";
 import { getSocket, joinEventRoom, leaveEventRoom } from "../services/socket";
@@ -21,14 +24,17 @@ import {
 } from "../types";
 import { QrModal } from "../components/qr/QrModal";
 import { QuizLeaderboard } from "../components/activities/QuizLeaderboard";
+import { ParticipantNameCloud } from "../components/waiting/ParticipantNameCloud";
 
 export const ParticipantEventPage: React.FC = () => {
   const { eventId } = useParams<{ eventId: string }>();
 
   const [event, setEvent] = useState<EventItem | null>(null);
   const [participant, setParticipant] = useState<Participant | null>(null);
+  const [participants, setParticipants] = useState<Participant[]>([]);
   const [activeActivity, setActiveActivity] = useState<Activity | null>(null);
   const [participantCount, setParticipantCount] = useState(0);
+  const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
   // QR Modal (Requirement: Top right QR button)
@@ -41,6 +47,24 @@ export const ParticipantEventPage: React.FC = () => {
     options: [],
     total: 0,
   });
+
+  // Dynamically ranked poll options with stable tie-breaking
+  const displayPollOptions = useMemo(() => {
+    if (!activeActivity || activeActivity.type !== "poll") return [];
+    const baseOptions =
+      pollResults.options && pollResults.options.length > 0
+        ? pollResults.options
+        : activeActivity.options || [];
+
+    return [...baseOptions].sort((a, b) => {
+      const aVotes = a.votes || 0;
+      const bVotes = b.votes || 0;
+      if (bVotes !== aVotes) {
+        return bVotes - aVotes;
+      }
+      return (a.order_index ?? 0) - (b.order_index ?? 0);
+    });
+  }, [activeActivity, pollResults.options]);
 
   // Word cloud state
   const [showWordInputModal, setShowWordInputModal] = useState(false);
@@ -61,6 +85,9 @@ export const ParticipantEventPage: React.FC = () => {
       const ev = await api.get(`/events/${eventId}`);
       setEvent(ev);
       setParticipantCount(ev.participant_count || 0);
+
+      const parts = await api.get(`/events/${eventId}/participants`).catch(() => []);
+      setParticipants(parts);
 
       // Participant session
       const stored = localStorage.getItem(`crowdpulse_participant_${eventId}`);
@@ -107,14 +134,49 @@ export const ParticipantEventPage: React.FC = () => {
       joinEventRoom(eventId);
       const socket = getSocket();
 
-      socket.on("participant:joined", () => {
-        setParticipantCount((prev) => prev + 1);
+      socket.on("participant:joined", (data) => {
+        if (data && data.participant) {
+          setParticipants((prev) => {
+            if (prev.some((p) => (p.id || p._id) === (data.participant.id || data.participant._id))) {
+              return prev;
+            }
+            return [data.participant, ...prev];
+          });
+        }
+        setParticipantCount((prev) => (data?.count ? data.count : prev + 1));
       });
 
       socket.on("participants:updated", (data) => {
         if (data && typeof data.count === "number") {
           setParticipantCount(data.count);
         }
+      });
+
+      socket.on("event:started", (data) => {
+        setEvent((prev) =>
+          prev
+            ? {
+                ...prev,
+                status: "LIVE",
+                startedAt: data.startedAt,
+                endsAt: data.endsAt,
+                duration: data.duration,
+              }
+            : null
+        );
+        loadData();
+      });
+
+      socket.on("event:ended", (data) => {
+        setEvent((prev) =>
+          prev
+            ? {
+                ...prev,
+                status: "ENDED",
+                stoppedAt: data.stoppedAt,
+              }
+            : null
+        );
       });
 
       socket.on("activity:started", (data) => {
@@ -165,6 +227,8 @@ export const ParticipantEventPage: React.FC = () => {
         leaveEventRoom(eventId);
         socket.off("participant:joined");
         socket.off("participants:updated");
+        socket.off("event:started");
+        socket.off("event:ended");
         socket.off("activity:started");
         socket.off("activity:closed");
         socket.off("poll:results_updated");
@@ -175,6 +239,39 @@ export const ParticipantEventPage: React.FC = () => {
       };
     }
   }, [eventId]);
+
+  // Event Lifecycle Countdown Timer
+  useEffect(() => {
+    const endsAtValue = event?.endsAt || (event as any)?.ends_at;
+    const isLive = event?.status === "LIVE" || event?.status === "live";
+
+    if (!event || !isLive || !endsAtValue) {
+      setRemainingSeconds(null);
+      return;
+    }
+
+    const updateRemaining = () => {
+      const ends = new Date(endsAtValue).getTime();
+      const now = Date.now();
+      const diffSec = Math.max(0, Math.floor((ends - now) / 1000));
+      setRemainingSeconds(diffSec);
+
+      if (diffSec <= 0) {
+        setEvent((prev) => (prev ? { ...prev, status: "ENDED" } : null));
+      }
+    };
+
+    updateRemaining();
+    const interval = setInterval(updateRemaining, 1000);
+    return () => clearInterval(interval);
+  }, [event?.status, event?.endsAt, (event as any)?.ends_at]);
+
+  const formatTimer = (totalSeconds: number | null) => {
+    if (totalSeconds === null || isNaN(totalSeconds)) return "--:--";
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+  };
 
   // Quiz Countdown Timer
   useEffect(() => {
@@ -276,6 +373,10 @@ export const ParticipantEventPage: React.FC = () => {
   const partId = participant?.id || participant?._id;
   const myLeaderboardEntry = quizLeaderboard.find((e) => e.participant_id === partId);
 
+  const isWaiting = event.status === "WAITING" || event.status === "waiting" || event.status === "draft";
+  const isLive = event.status === "LIVE" || event.status === "live" || event.status === "active";
+  const isEnded = event.status === "ENDED" || event.status === "ended";
+
   return (
     <div className="min-h-screen bg-[#0c1017] flex flex-col justify-between max-w-md mx-auto relative shadow-2xl border-x border-slate-800/40">
       {/* Mobile Top Bar with Required QR Icon in Top-Right */}
@@ -291,13 +392,31 @@ export const ParticipantEventPage: React.FC = () => {
             <h1 className="text-xs sm:text-sm font-bold text-white truncate tracking-tight">
               {event.title}
             </h1>
-            <div className="flex items-center gap-1 text-[10px] text-slate-400 font-mono">
+            <div className="flex items-center gap-1.5 text-[10px] text-slate-400 font-mono">
               <span>#{joinCode}</span>
               <span>•</span>
               <span className="flex items-center gap-0.5 text-cyan-400">
                 <Users className="w-2.5 h-2.5" />
                 {participantCount}
               </span>
+              {isWaiting && (
+                <>
+                  <span>•</span>
+                  <span className="text-amber-400 font-bold">WAITING</span>
+                </>
+              )}
+              {isLive && remainingSeconds !== null && (
+                <>
+                  <span>•</span>
+                  <span className="text-emerald-400 font-bold">⏱ {formatTimer(remainingSeconds)}</span>
+                </>
+              )}
+              {isEnded && (
+                <>
+                  <span>•</span>
+                  <span className="text-red-400 font-bold">ENDED</span>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -325,68 +444,190 @@ export const ParticipantEventPage: React.FC = () => {
       {/* Main Content Area */}
       <main className="flex-1 p-4 pb-20 flex flex-col justify-center">
         {/* CASE 1: WAITING ROOM */}
-        {!activeActivity && (
+        {isWaiting && (
+          <div className="space-y-5 my-auto animate-in fade-in duration-300">
+            <div className="text-center space-y-2.5">
+              <div className="w-14 h-14 rounded-3xl bg-amber-500/10 border border-amber-500/30 text-amber-400 flex items-center justify-center mx-auto shadow-xl">
+                <Clock className="w-7 h-7 animate-pulse" />
+              </div>
+
+              <div className="space-y-1">
+                <span className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-400 bg-amber-950/40 px-3 py-0.5 rounded-full border border-amber-500/30">
+                  <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                  WAITING FOR THE HOST
+                </span>
+                <h2 className="text-xl sm:text-2xl font-black text-white">
+                  The event hasn&apos;t started yet.
+                </h2>
+                <p className="text-xs text-slate-300 max-w-xs mx-auto">
+                  You&apos;re successfully joined. <strong>{participantCount} {participantCount === 1 ? "person" : "people"}</strong> are already here. Waiting for the host to start...
+                </p>
+              </div>
+
+              <div className="p-2.5 bg-[#161b26] border border-slate-800 rounded-2xl inline-flex items-center gap-2 text-xs text-slate-300">
+                <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                <span>You joined as <strong className="text-white">{participant?.name}</strong></span>
+              </div>
+            </div>
+
+            {/* Live Participant Cloud */}
+            <ParticipantNameCloud
+              participants={participants}
+              currentParticipantName={participant?.name}
+              variant="participant"
+              emptyMessage="You are the first attendee in the waiting room!"
+            />
+          </div>
+        )}
+
+        {/* CASE 2: EVENT ENDED */}
+        {isEnded && (
+          <div className="text-center space-y-5 my-auto animate-in fade-in duration-300">
+            <div className="w-16 h-16 rounded-3xl bg-red-500/10 border border-red-500/30 text-red-400 flex items-center justify-center mx-auto shadow-xl">
+              <Check className="w-8 h-8" />
+            </div>
+
+            <div className="space-y-2">
+              <span className="text-xs font-bold uppercase tracking-wider text-red-400 bg-red-950/40 px-3 py-1 rounded-full border border-red-500/30">
+                🔴 Event Ended
+              </span>
+              <h2 className="text-2xl font-black text-white">
+                Thank You for Participating!
+              </h2>
+              <p className="text-xs text-slate-400 max-w-xs mx-auto">
+                This event has concluded. All activity responses and submissions are closed.
+              </p>
+            </div>
+
+            {myLeaderboardEntry && (
+              <div className="p-4 bg-[#161b26] border border-slate-800 rounded-2xl max-w-xs mx-auto text-center space-y-1">
+                <p className="text-xs text-slate-400">Your Final Rank</p>
+                <p className="text-xl font-black text-amber-400">#{myLeaderboardEntry.rank} Place</p>
+                <p className="text-xs font-mono text-slate-300">{myLeaderboardEntry.total_score} points</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* CASE 3: LIVE EVENT — WAITING FOR FIRST/NEXT ACTIVITY */}
+        {isLive && !activeActivity && (
           <div className="text-center space-y-5 my-auto animate-in fade-in duration-300">
             <div className="w-16 h-16 rounded-3xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto shadow-xl">
-              <Sparkles className="w-8 h-8" />
+              <Sparkles className="w-8 h-8 animate-pulse" />
             </div>
 
             <div className="space-y-1">
-              <span className="text-xs font-semibold text-emerald-400">You&apos;re in!</span>
+              <span className="text-xs font-semibold text-emerald-400">Event is LIVE!</span>
               <h2 className="text-2xl font-black text-white">
                 Waiting for the next activity...
               </h2>
               <p className="text-xs text-slate-400 max-w-xs mx-auto pt-1">
-                The presenter will launch a poll, word cloud, or quiz shortly. Keep this page open!
+                The host will launch a poll, word cloud, or quiz question shortly. Keep your screen open!
               </p>
             </div>
 
-            <div className="p-3.5 bg-[#161b26] border border-slate-800 rounded-2xl inline-flex items-center gap-2 text-xs text-slate-300">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-              <span>Joined as <strong>{participant?.name}</strong></span>
-            </div>
+            {remainingSeconds !== null && (
+              <div className="p-3 bg-emerald-950/40 border border-emerald-500/30 rounded-2xl inline-flex items-center gap-2 text-xs text-emerald-300 font-mono font-bold">
+                <Clock className="w-4 h-4" />
+                <span>{formatTimer(remainingSeconds)} remaining</span>
+              </div>
+            )}
           </div>
         )}
 
-        {/* CASE 2: LIVE POLL */}
-        {activeActivity && activeActivity.type === "poll" && (
+        {/* CASE 4: LIVE POLL */}
+        {isLive && activeActivity && activeActivity.type === "poll" && (
           <div className="space-y-5 my-auto animate-in fade-in duration-300">
             <div className="text-center space-y-1">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 bg-emerald-950/40 border border-emerald-500/30 px-2.5 py-0.5 rounded-full">
-                ● Live Poll
+              <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 bg-emerald-950/40 border border-emerald-500/30 px-2.5 py-0.5 rounded-full inline-flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Live Poll
               </span>
               <h2 className="text-xl font-extrabold text-white tracking-tight pt-1">
                 {activeActivity.title}
               </h2>
             </div>
 
-            {/* Options list */}
-            <div className="space-y-2.5 pt-2">
-              {(activeActivity.options || []).map((option, idx) => {
+            {/* Options list with live layout reordering */}
+            <div className="space-y-2.5 pt-2 relative">
+              {displayPollOptions.map((option, idx) => {
                 const optId = option.id || option._id || "";
                 const isSelected = selectedPollOption === optId;
+                const votes = option.votes || 0;
+                const total = pollResults.total || 0;
+                const percentage = total > 0 ? Math.round((votes / total) * 100) : 0;
+                const isLeader = votes > 0 && idx === 0;
+                const letterIdx = typeof option.order_index === "number" ? option.order_index : idx;
+                const optKey = optId || `poll-opt-${option.text}-${letterIdx}`;
+
                 return (
-                  <button
-                    key={optId || idx}
+                  <motion.button
+                    layout
+                    key={optKey}
+                    layoutId={optKey}
+                    initial={false}
+                    transition={{
+                      type: "spring",
+                      stiffness: 350,
+                      damping: 28,
+                      mass: 0.8,
+                    }}
                     disabled={hasVotedPoll}
                     onClick={() => setSelectedPollOption(optId)}
-                    className={`w-full text-left p-4 rounded-2xl border transition-all flex items-center justify-between ${
+                    className={`w-full text-left p-4 rounded-2xl border transition-all relative overflow-hidden flex items-center justify-between ${
                       isSelected
-                        ? "bg-emerald-950/60 border-emerald-500 text-white ring-1 ring-emerald-500/40"
+                        ? "bg-emerald-950/60 border-emerald-500 text-white ring-1 ring-emerald-500/40 shadow-lg shadow-emerald-950/30"
                         : "bg-[#161b26] border-slate-800 text-slate-200 hover:border-slate-700"
-                    } ${hasVotedPoll ? "opacity-90 cursor-default" : "active:scale-[0.99]"}`}
+                    } ${hasVotedPoll ? "cursor-default" : "active:scale-[0.99]"}`}
                   >
-                    <div className="flex items-center gap-3">
-                      <span className="w-6 h-6 rounded-lg bg-slate-800 text-slate-300 text-xs font-bold flex items-center justify-center border border-slate-700">
-                        {String.fromCharCode(65 + idx)}
+                    {/* Live progress background if participant has voted */}
+                    {hasVotedPoll && (
+                      <div
+                        className={`absolute top-0 bottom-0 left-0 transition-all duration-700 ease-out rounded-r-xl ${
+                          isSelected
+                            ? "bg-emerald-500/25 border-r-2 border-emerald-400"
+                            : isLeader
+                            ? "bg-cyan-500/15"
+                            : "bg-slate-700/20"
+                        }`}
+                        style={{ width: `${percentage}%` }}
+                      />
+                    )}
+
+                    <div className="relative z-10 flex items-center gap-3 min-w-0">
+                      <span
+                        className={`w-7 h-7 rounded-xl text-xs font-bold flex items-center justify-center flex-shrink-0 border transition-colors ${
+                          isSelected
+                            ? "bg-emerald-500 text-slate-950 border-emerald-400 font-black"
+                            : isLeader
+                            ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/30"
+                            : "bg-slate-800 text-slate-300 border-slate-700"
+                        }`}
+                      >
+                        {isLeader && votes > 0 ? (
+                          <Trophy className="w-3.5 h-3.5 text-emerald-400" />
+                        ) : (
+                          String.fromCharCode(65 + (letterIdx % 26))
+                        )}
                       </span>
-                      <span className="text-sm font-semibold">{option.text}</span>
+                      <span className="text-sm font-semibold truncate">{option.text}</span>
                     </div>
 
-                    {isSelected && (
-                      <Check className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-                    )}
-                  </button>
+                    <div className="relative z-10 flex items-center gap-2 flex-shrink-0">
+                      {hasVotedPoll && (
+                        <div className="flex items-center gap-2 font-mono text-xs">
+                          <span className="text-slate-400 text-[11px]">{votes}v</span>
+                          <span className="font-bold text-slate-200 bg-slate-800/80 px-2 py-0.5 rounded-lg border border-slate-700">
+                            {percentage}%
+                          </span>
+                        </div>
+                      )}
+
+                      {isSelected && (
+                        <Check className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                      )}
+                    </div>
+                  </motion.button>
                 );
               })}
             </div>
@@ -407,7 +648,7 @@ export const ParticipantEventPage: React.FC = () => {
                   <span>Response submitted ✓</span>
                 </div>
                 <p className="text-[11px] text-slate-400">
-                  Watch live results on the presentation screen!
+                  Live ranking updates dynamically as votes come in!
                 </p>
               </div>
             )}
