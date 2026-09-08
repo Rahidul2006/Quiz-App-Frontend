@@ -4,6 +4,20 @@ const getToken = (): string | null => {
   return localStorage.getItem("crowdpulse_admin_token");
 };
 
+const handleResponse = async (res: Response, endpoint: string) => {
+  if (!res.ok) {
+    if ((res.status === 401 || res.status === 403) && !endpoint.startsWith("/auth/login") && !endpoint.startsWith("/auth/register")) {
+      localStorage.removeItem("crowdpulse_admin_token");
+      localStorage.removeItem("crowdpulse_admin_user");
+    }
+    const err = await res.json().catch(() => ({ message: "Request failed" }));
+    const error = new Error(err.message || `${endpoint} failed with status ${res.status}`) as any;
+    error.status = res.status;
+    throw error;
+  }
+  return res.json();
+};
+
 export const api = {
   async get(endpoint: string) {
     const token = getToken();
@@ -13,13 +27,7 @@ export const api = {
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ message: "Request failed" }));
-      const error = new Error(err.message || `GET ${endpoint} failed with ${res.status}`) as any;
-      error.status = res.status;
-      throw error;
-    }
-    return res.json();
+    return handleResponse(res, endpoint);
   },
 
   async post(endpoint: string, body: any) {
@@ -32,13 +40,7 @@ export const api = {
       },
       body: JSON.stringify(body),
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ message: "Request failed" }));
-      const error = new Error(err.message || `POST ${endpoint} failed with ${res.status}`) as any;
-      error.status = res.status;
-      throw error;
-    }
-    return res.json();
+    return handleResponse(res, endpoint);
   },
 
   async patch(endpoint: string, body: any) {
@@ -51,13 +53,7 @@ export const api = {
       },
       body: JSON.stringify(body),
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ message: "Request failed" }));
-      const error = new Error(err.message || `PATCH ${endpoint} failed with ${res.status}`) as any;
-      error.status = res.status;
-      throw error;
-    }
-    return res.json();
+    return handleResponse(res, endpoint);
   },
 
   async delete(endpoint: string) {
@@ -69,12 +65,7 @@ export const api = {
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ message: "Request failed" }));
-      const error = new Error(err.message || `DELETE ${endpoint} failed with ${res.status}`) as any;
-      error.status = res.status;
-      throw error;
-    }
-    return res.json();
+    return handleResponse(res, endpoint);
   },
 };
+

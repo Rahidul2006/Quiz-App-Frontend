@@ -1,15 +1,18 @@
 import React, { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { Zap, Lock, Mail, ArrowRight, ShieldCheck } from "lucide-react";
+import { Link, useNavigate, useLocation } from "react-router-dom";
+import { Zap, Lock, Mail, ArrowRight } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 
 export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+
+  const redirectPath = (location.state as any)?.from?.pathname || "/dashboard";
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -18,21 +21,9 @@ export const LoginPage: React.FC = () => {
 
     try {
       await login(email, password);
-      navigate("/dashboard");
+      navigate(redirectPath, { replace: true });
     } catch (err: any) {
       setErrorMsg(err.message || "Invalid credentials");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleQuickDemoAdmin = async () => {
-    setLoading(true);
-    try {
-      await login("admin@demo.org", "demo123");
-      navigate("/dashboard");
-    } catch (err: any) {
-      setErrorMsg(err.message || "Demo login failed");
     } finally {
       setLoading(false);
     }
@@ -69,7 +60,7 @@ export const LoginPage: React.FC = () => {
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="admin@demo.org"
+                placeholder="admin@example.com"
                 className="w-full bg-[#0c1017] border border-slate-700/80 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
               />
             </div>
@@ -102,25 +93,7 @@ export const LoginPage: React.FC = () => {
           </button>
         </form>
 
-        <div className="relative my-4">
-          <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-slate-800" />
-          </div>
-          <div className="relative flex justify-center text-xs uppercase">
-            <span className="bg-[#161b26] px-2 text-slate-500">Or Demo Access</span>
-          </div>
-        </div>
-
-        <button
-          type="button"
-          onClick={handleQuickDemoAdmin}
-          className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-colors"
-        >
-          <ShieldCheck className="w-4 h-4 text-emerald-400" />
-          <span>Launch Demo Admin Dashboard</span>
-        </button>
-
-        <div className="text-center text-xs text-slate-400">
+        <div className="text-center text-xs text-slate-400 pt-2 border-t border-slate-800">
           Need an account?{" "}
           <Link to="/register" className="text-emerald-400 hover:underline">
             Register here
@@ -130,3 +103,4 @@ export const LoginPage: React.FC = () => {
     </div>
   );
 };
+

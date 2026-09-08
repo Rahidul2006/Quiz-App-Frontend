@@ -35,7 +35,7 @@ export const JoinIndexPage: React.FC = () => {
             autoFocus
             value={code}
             onChange={(e) => setCode(e.target.value)}
-            placeholder="e.g. 3157530"
+            placeholder="e.g. 1234567"
             className="w-full text-center bg-[#0c1017] border border-slate-700 rounded-2xl py-3.5 px-4 text-xl font-mono tracking-widest text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500"
           />
 

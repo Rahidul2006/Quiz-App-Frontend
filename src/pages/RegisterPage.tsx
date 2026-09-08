@@ -1,16 +1,19 @@
 import React, { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import { Zap, Lock, Mail, User as UserIcon, ArrowRight } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 
 export const RegisterPage: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { register } = useAuth();
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+
+  const redirectPath = (location.state as any)?.from?.pathname || "/dashboard";
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -19,13 +22,14 @@ export const RegisterPage: React.FC = () => {
 
     try {
       await register(fullName, email, password);
-      navigate("/dashboard");
+      navigate(redirectPath, { replace: true });
     } catch (err: any) {
       setErrorMsg(err.message || "Registration failed");
     } finally {
       setLoading(false);
     }
   };
+
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4">

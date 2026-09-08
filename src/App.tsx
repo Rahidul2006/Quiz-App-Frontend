@@ -2,6 +2,8 @@ import React from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./context/AuthContext";
 
+import { ProtectedRoute } from "./components/ProtectedRoute";
+
 import { LandingPage } from "./pages/LandingPage";
 import { LoginPage } from "./pages/LoginPage";
 import { RegisterPage } from "./pages/RegisterPage";
@@ -22,11 +24,33 @@ export const App: React.FC = () => {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
 
-          {/* Admin Dashboard */}
-          <Route path="/dashboard" element={<DashboardPage />} />
+          {/* Protected Admin Routes */}
+          <Route
+            path="/dashboard"
+            element={
+              <ProtectedRoute requireAdmin={true}>
+                <DashboardPage />
+              </ProtectedRoute>
+            }
+          />
           <Route path="/dashboard/events" element={<Navigate to="/dashboard" replace />} />
-          <Route path="/dashboard/events/new" element={<NewEventPage />} />
-          <Route path="/dashboard/events/:eventId" element={<EventManagementPage />} />
+          <Route
+            path="/dashboard/events/new"
+            element={
+              <ProtectedRoute requireAdmin={true}>
+                <NewEventPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/dashboard/events/:eventId"
+            element={
+              <ProtectedRoute requireAdmin={true}>
+                <EventManagementPage />
+              </ProtectedRoute>
+            }
+          />
+
 
           {/* 16:9 Presentation Mode */}
           <Route path="/events/:eventId/present" element={<PresentationPage />} />

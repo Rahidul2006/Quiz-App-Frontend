@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
@@ -14,14 +14,21 @@ import {
   AlertTriangle,
   Radio,
   CheckCircle2,
+  BarChart3,
+  Trophy,
+  Sparkles,
+  RefreshCw,
+  HelpCircle,
+  Hash,
 } from "lucide-react";
 import { api } from "../services/api";
 import { getSocket, joinEventRoom, leaveEventRoom } from "../services/socket";
-import { Activity, EventItem, Participant, PollOption, QuizQuestion } from "../types";
+import { Activity, EventItem, Participant, PollOption, QuizQuestion, LeaderboardEntry } from "../types";
 import { QrModal } from "../components/qr/QrModal";
 import { PollVisualizer } from "../components/activities/PollVisualizer";
 import { WordCloudVisualizer } from "../components/activities/WordCloudVisualizer";
 import { QuizArena } from "../components/activities/QuizArena";
+import { QuizLeaderboard } from "../components/activities/QuizLeaderboard";
 import { ParticipantNameCloud } from "../components/waiting/ParticipantNameCloud";
 
 export const EventManagementPage: React.FC = () => {
@@ -43,6 +50,10 @@ export const EventManagementPage: React.FC = () => {
 
   // QR Modal
   const [showQrModal, setShowQrModal] = useState(false);
+
+  // Delete Event Modal
+  const [showDeleteEventModal, setShowDeleteEventModal] = useState(false);
+  const [deletingEvent, setDeletingEvent] = useState(false);
 
   // Create Activity Modal
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -71,10 +82,33 @@ export const EventManagementPage: React.FC = () => {
     },
   ]);
 
-  // Live Results
+  // Live Results State
   const [pollResults, setPollResults] = useState<{ options: PollOption[]; total: number }>({ options: [], total: 0 });
   const [wordCloudWords, setWordCloudWords] = useState<any[]>([]);
   const [quizLeaderboard, setQuizLeaderboard] = useState<any[]>([]);
+
+  // Results Tab Inspector State
+  const [selectedResultActivityId, setSelectedResultActivityId] = useState<string | null>(null);
+  const [activityResultsData, setActivityResultsData] = useState<any | null>(null);
+  const [loadingResults, setLoadingResults] = useState<boolean>(false);
+
+  const fetchActivityResult = useCallback(async (actId: string) => {
+    setLoadingResults(true);
+    try {
+      const act = activities.find((a: any) => (a.id || a._id) === actId);
+      if (act && act.type === "quiz") {
+        const lb = await api.get(`/quizzes/${actId}/leaderboard`);
+        setActivityResultsData({ type: "quiz", leaderboard: lb, activity: act });
+      } else {
+        const res = await api.get(`/activities/${actId}/results`);
+        setActivityResultsData({ ...res, activity: act });
+      }
+    } catch (err) {
+      console.error("Failed to fetch activity results:", err);
+    } finally {
+      setLoadingResults(false);
+    }
+  }, [activities]);
 
   const loadEventData = async () => {
     if (!eventId) return;
@@ -103,12 +137,30 @@ export const EventManagementPage: React.FC = () => {
           }
         }
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      if (e?.status === 401 || e?.status === 403) {
+        navigate("/login", { replace: true });
+      }
     } finally {
       setLoading(false);
     }
   };
+
+  const handleConfirmDeleteEvent = async () => {
+    if (!eventId) return;
+    setDeletingEvent(true);
+    try {
+      await api.delete(`/events/${eventId}`);
+      navigate("/dashboard");
+    } catch (err) {
+      console.error("Failed to delete event:", err);
+    } finally {
+      setDeletingEvent(false);
+    }
+  };
+
+
 
   useEffect(() => {
     loadEventData();
@@ -434,6 +486,15 @@ export const EventManagementPage: React.FC = () => {
               </button>
             )}
 
+            <button
+              onClick={() => setShowDeleteEventModal(true)}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-red-600/10 hover:bg-red-600/20 text-red-400 text-xs font-semibold border border-red-500/30 transition-colors"
+              title="Delete Event"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Delete</span>
+            </button>
+
             <Link
               to={`/events/${evId}/present`}
               className="flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold transition-all border border-slate-700"
@@ -467,14 +528,21 @@ export const EventManagementPage: React.FC = () => {
             Participants ({participants.length})
           </button>
           <button
-            onClick={() => setActiveTab("results")}
+            onClick={() => {
+              setActiveTab("results");
+              const targetId = selectedResultActivityId || activeActId || (activities[0] ? (activities[0].id || (activities[0] as any)._id) : null);
+              if (targetId) {
+                setSelectedResultActivityId(targetId);
+                fetchActivityResult(targetId);
+              }
+            }}
             className={`pb-3 px-1 border-b-2 transition-colors ${
               activeTab === "results"
                 ? "border-emerald-400 text-emerald-400 font-bold"
                 : "border-transparent text-slate-400 hover:text-slate-200"
             }`}
           >
-            Live Results
+            Activity Results
           </button>
           <button
             onClick={() => setActiveTab("settings")}
@@ -570,6 +638,7 @@ export const EventManagementPage: React.FC = () => {
             </div>
           </div>
         )}
+
         {/* TAB 1: ACTIVITIES */}
         {activeTab === "activities" && (
           <div className="space-y-6">
@@ -592,7 +661,7 @@ export const EventManagementPage: React.FC = () => {
 
             <div className="space-y-4">
               {activities.map((activity) => {
-                const actId = activity.id || activity._id || "";
+                const actId = activity.id || (activity as any)._id || "";
                 const isActive = actId === activeActId;
                 return (
                   <div
@@ -642,7 +711,20 @@ export const EventManagementPage: React.FC = () => {
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                          onClick={() => {
+                            setSelectedResultActivityId(actId);
+                            setActiveTab("results");
+                            fetchActivityResult(actId);
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-colors"
+                          title="View Results"
+                        >
+                          <BarChart3 className="w-3.5 h-3.5 text-cyan-400" />
+                          <span>Results</span>
+                        </button>
+
                         {isActive ? (
                           <button
                             onClick={() => handleStop(actId)}
@@ -673,6 +755,25 @@ export const EventManagementPage: React.FC = () => {
                   </div>
                 );
               })}
+
+              {activities.length === 0 && (
+                <div className="bg-[#161b26] border border-dashed border-slate-800 rounded-3xl p-12 text-center space-y-3">
+                  <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mx-auto text-emerald-400">
+                    <Sparkles className="w-6 h-6" />
+                  </div>
+                  <h4 className="text-base font-bold text-white">No activities created yet</h4>
+                  <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                    Create polls, word clouds, or quiz competitions to engage your audience during the event.
+                  </p>
+                  <button
+                    onClick={() => setShowCreateModal(true)}
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Create Your First Activity</span>
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -695,7 +796,7 @@ export const EventManagementPage: React.FC = () => {
             <div className="divide-y divide-slate-800/60">
               {participants.map((p, idx) => (
                 <div
-                  key={p.id || p._id || idx}
+                  key={p.id || (p as any)._id || idx}
                   className="flex items-center justify-between py-3 px-2 hover:bg-slate-800/40 rounded-xl"
                 >
                   <div className="flex items-center gap-3">
@@ -708,7 +809,7 @@ export const EventManagementPage: React.FC = () => {
                     </div>
                   </div>
                   <span className="text-[11px] text-slate-500 font-mono">
-                    {p.joinedAt || p.joined_at ? new Date(p.joinedAt || p.joined_at!).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "Recently"}
+                    {p.joinedAt || (p as any).joined_at ? new Date(p.joinedAt || (p as any).joined_at!).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "Recently"}
                   </span>
                 </div>
               ))}
@@ -722,54 +823,223 @@ export const EventManagementPage: React.FC = () => {
           </div>
         )}
 
-        {/* TAB 3: LIVE RESULTS */}
+        {/* TAB 3: ACTIVITY RESULTS */}
         {activeTab === "results" && (
           <div className="space-y-6">
-            <div className="bg-[#161b26] border border-slate-800 rounded-3xl p-6 shadow-xl">
-              <h3 className="text-base font-bold text-white mb-6">Live Activity Results</h3>
+            {/* Activity Selector Bar */}
+            {activities.length > 0 && (
+              <div className="flex items-center justify-between flex-wrap gap-3 bg-[#161b26] border border-slate-800 p-3 rounded-2xl">
+                <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0 max-w-full">
+                  <span className="text-xs font-bold text-slate-400 whitespace-nowrap pl-2">Select Activity:</span>
+                  {activities.map((act) => {
+                    const actId = act.id || (act as any)._id || "";
+                    const isSelected = selectedResultActivityId === actId;
+                    const isLiveOnStage = actId === activeActId;
+                    return (
+                      <button
+                        key={actId}
+                        onClick={() => {
+                          setSelectedResultActivityId(actId);
+                          fetchActivityResult(actId);
+                        }}
+                        className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap border ${
+                          isSelected
+                            ? "bg-emerald-500 text-slate-950 border-emerald-400 shadow-md shadow-emerald-950"
+                            : "bg-slate-800/80 text-slate-300 border-slate-700 hover:bg-slate-700"
+                        }`}
+                      >
+                        <span>
+                          {act.type === "poll" ? "📊" : act.type === "word_cloud" ? "☁" : "🏆"} {act.title}
+                        </span>
+                        {isLiveOnStage && (
+                          <span className={`w-2 h-2 rounded-full ${isSelected ? "bg-slate-950" : "bg-emerald-400 animate-ping"}`} />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
 
-              {activeActivity ? (
-                <div>
-                  {activeActivity.type === "poll" && (
-                    <PollVisualizer
-                      question={activeActivity.title}
-                      options={pollResults.options}
-                      totalVotes={pollResults.total}
-                    />
+                {selectedResultActivityId && (
+                  <button
+                    onClick={() => fetchActivityResult(selectedResultActivityId)}
+                    disabled={loadingResults}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold border border-slate-700 transition-colors"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 text-cyan-400 ${loadingResults ? "animate-spin" : ""}`} />
+                    <span>Refresh</span>
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Results Details */}
+            {(() => {
+              const currentAct = activities.find((a: any) => (a.id || a._id) === selectedResultActivityId) || activeActivity;
+              if (!currentAct) {
+                return (
+                  <div className="bg-[#161b26] border border-slate-800 rounded-3xl p-12 text-center text-slate-500 text-sm">
+                    No activities available to display results. Create an activity first.
+                  </div>
+                );
+              }
+
+              const isCurrentLive = (currentAct.id || (currentAct as any)._id) === activeActId;
+
+              return (
+                <div className="bg-[#161b26] border border-slate-800 rounded-3xl p-6 shadow-xl space-y-6">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full border ${
+                            currentAct.type === "poll"
+                              ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
+                              : currentAct.type === "word_cloud"
+                              ? "bg-cyan-500/10 text-cyan-400 border-cyan-500/30"
+                              : "bg-purple-500/10 text-purple-400 border-purple-500/30"
+                          }`}
+                        >
+                          {currentAct.type.replace("_", " ")} Results
+                        </span>
+                        {isCurrentLive && (
+                          <span className="text-[10px] font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                            ● Live on Stage
+                          </span>
+                        )}
+                      </div>
+                      <h3 className="text-xl font-bold text-white mt-1">{currentAct.title}</h3>
+                    </div>
+
+                    {isCurrentLive ? (
+                      <button
+                        onClick={() => handleStop(currentAct.id || (currentAct as any)._id)}
+                        className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-red-600/20 hover:bg-red-600/30 text-red-400 text-xs font-semibold border border-red-500/30 self-start sm:self-auto"
+                      >
+                        <Square className="w-3.5 h-3.5 fill-current" />
+                        <span>Stop Live Activity</span>
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleLaunch(currentAct.id || (currentAct as any)._id)}
+                        className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-md shadow-emerald-950 active:scale-95 self-start sm:self-auto"
+                      >
+                        <Play className="w-3.5 h-3.5 fill-current" />
+                        <span>Launch to Stage</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Poll Visualizer & Breakdown Table */}
+                  {currentAct.type === "poll" && (
+                    <div className="space-y-6">
+                      <PollVisualizer
+                        question={currentAct.title}
+                        options={isCurrentLive ? pollResults.options : (activityResultsData?.options || currentAct.options || [])}
+                        totalVotes={isCurrentLive ? pollResults.total : (activityResultsData?.total || 0)}
+                      />
+
+                      {/* Vote Breakdown Table */}
+                      <div className="bg-[#0c1017] border border-slate-800 rounded-2xl p-4 sm:p-5 space-y-3">
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                          Option Vote Breakdown
+                        </h4>
+                        <div className="space-y-2">
+                          {(isCurrentLive ? pollResults.options : (activityResultsData?.options || currentAct.options || [])).map((opt: any, idx: number) => {
+                            const total = isCurrentLive ? pollResults.total : (activityResultsData?.total || 0);
+                            const votes = opt.votes || opt.vote_count || 0;
+                            const pct = total > 0 ? Math.round((votes / total) * 100) : 0;
+                            return (
+                              <div key={idx} className="flex items-center justify-between bg-slate-900/60 p-3 rounded-xl border border-slate-800/80">
+                                <div className="flex items-center gap-3 flex-1 mr-4">
+                                  <span className="w-6 h-6 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-bold flex items-center justify-center">
+                                    {String.fromCharCode(65 + idx)}
+                                  </span>
+                                  <span className="text-sm font-medium text-slate-200">{opt.text || opt.option_text}</span>
+                                </div>
+                                <div className="flex items-center gap-4 text-xs">
+                                  <span className="font-mono text-slate-400">{votes} votes</span>
+                                  <span className="font-mono font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded-md border border-emerald-500/30 min-w-[48px] text-right">
+                                    {pct}%
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
                   )}
-                  {activeActivity.type === "word_cloud" && (
-                    <WordCloudVisualizer
-                      question={activeActivity.title}
-                      words={wordCloudWords}
-                    />
+
+                  {/* Word Cloud Visualizer & Breakdown */}
+                  {currentAct.type === "word_cloud" && (
+                    <div className="space-y-6">
+                      <WordCloudVisualizer
+                        question={currentAct.title}
+                        words={isCurrentLive ? wordCloudWords : (activityResultsData?.words || [])}
+                      />
+
+                      {/* Word Cloud Frequency Table */}
+                      <div className="bg-[#0c1017] border border-slate-800 rounded-2xl p-4 sm:p-5 space-y-3">
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                          Top Submitted Words
+                        </h4>
+                        {(isCurrentLive ? wordCloudWords : (activityResultsData?.words || [])).length > 0 ? (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                            {(isCurrentLive ? wordCloudWords : (activityResultsData?.words || [])).map((w: any, idx: number) => (
+                              <div key={idx} className="flex items-center justify-between bg-slate-900/60 p-3 rounded-xl border border-slate-800/80">
+                                <span className="text-sm font-bold text-cyan-300">"{w.text || w.word}"</span>
+                                <span className="text-xs font-mono font-bold text-slate-300 bg-slate-800 px-2.5 py-1 rounded-md border border-slate-700">
+                                  {w.value || w.count} entries
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-slate-500 py-4 text-center">No word responses recorded yet.</p>
+                        )}
+                      </div>
+                    </div>
                   )}
-                  {activeActivity.type === "quiz" && activeActivity.questions && (
-                    <QuizArena
-                      question={activeActivity.questions[activeActivity.activeQuestionIndex || 0]}
-                      questionIndex={activeActivity.activeQuestionIndex || 0}
-                      totalQuestions={activeActivity.questions.length}
-                      leaderboard={quizLeaderboard}
-                      isAdmin={true}
-                      onAdvance={async () => {
-                        const nextIdx = (activeActivity.activeQuestionIndex || 0) + 1;
-                        await api.post(`/quizzes/${activeActivity.id || activeActivity._id}/advance`, {
-                          questionIndex: nextIdx,
-                        });
-                        loadEventData();
-                      }}
-                      onFinish={async () => {
-                        await api.post(`/quizzes/${activeActivity.id || activeActivity._id}/finish`, {});
-                        loadEventData();
-                      }}
-                    />
+
+                  {/* Quiz Arena & Leaderboard */}
+                  {currentAct.type === "quiz" && (
+                    <div className="space-y-6">
+                      {isCurrentLive && currentAct.questions && (
+                        <QuizArena
+                          question={currentAct.questions[currentAct.activeQuestionIndex || 0]}
+                          questionIndex={currentAct.activeQuestionIndex || 0}
+                          totalQuestions={currentAct.questions.length}
+                          leaderboard={quizLeaderboard}
+                          isAdmin={true}
+                          onAdvance={async () => {
+                            const nextIdx = (currentAct.activeQuestionIndex || 0) + 1;
+                            await api.post(`/quizzes/${currentAct.id || (currentAct as any)._id}/advance`, {
+                              questionIndex: nextIdx,
+                            });
+                            loadEventData();
+                          }}
+                          onFinish={async () => {
+                            await api.post(`/quizzes/${currentAct.id || (currentAct as any)._id}/finish`, {});
+                            loadEventData();
+                          }}
+                        />
+                      )}
+
+                      {/* Standalone Quiz Leaderboard Table */}
+                      <div className="space-y-3">
+                        <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                          <Trophy className="w-4 h-4 text-amber-400" />
+                          <span>Quiz Leaderboard Rankings</span>
+                        </h4>
+                        <QuizLeaderboard
+                          leaderboard={isCurrentLive ? quizLeaderboard : (activityResultsData?.leaderboard || [])}
+                        />
+                      </div>
+                    </div>
                   )}
                 </div>
-              ) : (
-                <div className="py-12 text-center text-slate-500 text-sm">
-                  No activity is currently active. Launch a poll, word cloud, or quiz to inspect live results.
-                </div>
-              )}
-            </div>
+              );
+            })()}
           </div>
         )}
 
@@ -799,21 +1069,57 @@ export const EventManagementPage: React.FC = () => {
                   <p className="text-slate-500">Permanently delete this event, activities and participant records.</p>
                 </div>
                 <button
-                  onClick={async () => {
-                    if (confirm("Are you sure you want to permanently delete this event?")) {
-                      await api.delete(`/events/${evId}`);
-                      navigate("/dashboard");
-                    }
-                  }}
+                  onClick={() => setShowDeleteEventModal(true)}
                   className="px-4 py-2 rounded-xl bg-red-600/20 hover:bg-red-600/30 text-red-400 font-semibold border border-red-500/30 transition-colors"
                 >
-                  Delete
+                  Delete Event
                 </button>
               </div>
             </div>
           </div>
         )}
       </main>
+
+      {/* DELETE EVENT CONFIRMATION MODAL */}
+      {showDeleteEventModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-[#161b26] border border-red-500/30 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl space-y-6">
+            <div className="flex items-center gap-3 text-red-400">
+              <div className="w-12 h-12 rounded-2xl bg-red-950/80 border border-red-500/30 flex items-center justify-center">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-white">Delete Entire Event?</h3>
+                <p className="text-xs text-red-400/80">Permanent action • Cannot be undone</p>
+              </div>
+            </div>
+
+            <p className="text-sm text-slate-300 leading-relaxed">
+              Are you sure you want to permanently delete <strong className="text-white">"{event.title}"</strong>? This will purge all associated activities, participant records, and voting results.
+            </p>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowDeleteEventModal(false)}
+                disabled={deletingEvent}
+                className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteEvent}
+                disabled={deletingEvent}
+                className="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs shadow-lg shadow-red-950 transition-colors active:scale-95 disabled:opacity-50 flex items-center gap-2"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{deletingEvent ? "Deleting..." : "Delete Event Permanently"}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* CREATE ACTIVITY MODAL */}
       {showCreateModal && (

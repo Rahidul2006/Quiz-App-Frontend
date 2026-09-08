@@ -65,7 +65,7 @@ export const NewEventPage: React.FC = () => {
               required
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g. React Kolkata Offline Meetup 2026"
+              placeholder="e.g. Annual Community Conference 2026"
               className="w-full bg-[#0c1017] border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
             />
           </div>

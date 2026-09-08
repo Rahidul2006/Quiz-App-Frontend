@@ -13,6 +13,8 @@ import {
   LogOut,
   X,
   Clock,
+  Trash2,
+  AlertTriangle,
 } from "lucide-react";
 import { api } from "../services/api";
 import { useAuth } from "../context/AuthContext";
@@ -40,12 +42,20 @@ export const DashboardPage: React.FC = () => {
   // QR Modal state
   const [selectedQrEvent, setSelectedQrEvent] = useState<EventItem | null>(null);
 
+  // Delete Event Modal state
+  const [eventToDelete, setEventToDelete] = useState<EventItem | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
   const loadData = async () => {
     try {
       const data = await api.get("/events");
       setEvents(data);
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      if (e?.status === 401 || e?.status === 403) {
+        logout();
+        navigate("/login", { replace: true });
+      }
     } finally {
       setLoading(false);
     }
@@ -79,8 +89,23 @@ export const DashboardPage: React.FC = () => {
     }
   };
 
+  const handleConfirmDelete = async () => {
+    if (!eventToDelete) return;
+    const evId = eventToDelete.id || eventToDelete._id || "";
+    setDeleting(true);
+    try {
+      await api.delete(`/events/${evId}`);
+      setEvents((prev) => prev.filter((e) => (e.id || e._id) !== evId));
+      setEventToDelete(null);
+    } catch (err) {
+      console.error("Failed to delete event:", err);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const totalEvents = events.length;
-  const activeEvents = events.filter((e) => e.status === "active").length;
+  const activeEvents = events.filter((e) => e.status === "active" || e.status === "LIVE").length;
   const totalParticipants = events.reduce((sum, e) => sum + (e.participant_count || 0), 0);
   const totalActivities = events.reduce((sum, e) => sum + (e.activity_count || 0), 0);
 
@@ -201,7 +226,7 @@ export const DashboardPage: React.FC = () => {
         {/* Events Cards Grid */}
         {loading ? (
           <div className="py-20 text-center text-slate-500 text-sm">
-            Loading events from MongoDB...
+            Loading events from database...
           </div>
         ) : events.length === 0 ? (
           <div className="bg-[#141822] border border-dashed border-slate-800 rounded-3xl p-12 text-center space-y-4">
@@ -227,6 +252,7 @@ export const DashboardPage: React.FC = () => {
             {events.map((ev) => {
               const evId = ev.id || ev._id || "";
               const joinCode = ev.joinCode || ev.join_code || "";
+              const isLive = ev.status === "active" || ev.status === "LIVE" || ev.status === "live";
               return (
                 <div
                   key={evId}
@@ -236,12 +262,12 @@ export const DashboardPage: React.FC = () => {
                     <div className="flex items-center justify-between gap-2 mb-3">
                       <span
                         className={`text-[11px] font-semibold uppercase tracking-wider px-2.5 py-0.5 rounded-full border ${
-                          ev.status === "active"
+                          isLive
                             ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
                             : "bg-slate-800 text-slate-400 border-slate-700"
                         }`}
                       >
-                        {ev.status === "active" ? "● Active" : ev.status}
+                        {isLive ? "● Active" : ev.status}
                       </span>
 
                       <span className="text-xs font-mono text-slate-400 bg-slate-800/80 px-2 py-0.5 rounded-md border border-slate-700/60">
@@ -272,17 +298,17 @@ export const DashboardPage: React.FC = () => {
                   </div>
 
                   {/* Actions */}
-                  <div className="grid grid-cols-3 gap-2 mt-6 pt-4 border-t border-slate-800/80">
+                  <div className="flex items-center gap-2 mt-6 pt-4 border-t border-slate-800/80">
                     <Link
                       to={`/dashboard/events/${evId}`}
-                      className="flex items-center justify-center gap-1 py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-semibold text-xs transition-colors border border-slate-700"
+                      className="flex-1 flex items-center justify-center gap-1 py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-semibold text-xs transition-colors border border-slate-700"
                     >
                       <span>Manage</span>
                     </Link>
 
                     <Link
                       to={`/events/${evId}/present`}
-                      className="flex items-center justify-center gap-1 py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs transition-colors shadow-md shadow-emerald-950"
+                      className="flex-1 flex items-center justify-center gap-1 py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs transition-colors shadow-md shadow-emerald-950"
                     >
                       <Tv className="w-3.5 h-3.5" />
                       <span>Present</span>
@@ -290,10 +316,18 @@ export const DashboardPage: React.FC = () => {
 
                     <button
                       onClick={() => setSelectedQrEvent(ev)}
-                      className="flex items-center justify-center gap-1 py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs transition-colors border border-slate-700"
+                      className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs transition-colors border border-slate-700"
+                      title="Show QR Code"
                     >
-                      <QrCode className="w-3.5 h-3.5" />
-                      <span>QR</span>
+                      <QrCode className="w-4 h-4" />
+                    </button>
+
+                    <button
+                      onClick={() => setEventToDelete(ev)}
+                      className="p-2 rounded-xl bg-slate-800/80 hover:bg-red-950/60 text-slate-400 hover:text-red-400 font-semibold text-xs transition-colors border border-slate-700/60 hover:border-red-500/40"
+                      title="Delete Event"
+                    >
+                      <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
                 </div>
@@ -329,7 +363,7 @@ export const DashboardPage: React.FC = () => {
                   required
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
-                  placeholder="e.g. React Kolkata Meetup 2026"
+                  placeholder="e.g. Annual Community Conference 2026"
                   className="w-full bg-[#0c1017] border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
                 />
               </div>
@@ -445,6 +479,48 @@ export const DashboardPage: React.FC = () => {
         </div>
       )}
 
+      {/* Delete Event Confirmation Modal */}
+      {eventToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="relative w-full max-w-md bg-[#161b26] border border-red-500/40 rounded-3xl p-6 md:p-8 shadow-2xl space-y-5">
+            <div className="w-12 h-12 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-400 flex items-center justify-center mx-auto shadow-lg shadow-red-950/40">
+              <AlertTriangle className="w-6 h-6" />
+            </div>
+
+            <div className="text-center space-y-2">
+              <h3 className="text-xl font-bold text-white">Delete Event</h3>
+              <p className="text-xs text-slate-300">
+                Are you sure you want to permanently delete{" "}
+                <strong className="text-white font-semibold">&ldquo;{eventToDelete.title}&rdquo;</strong>?
+              </p>
+              <p className="text-[11px] text-red-400/90 leading-relaxed pt-1">
+                This action cannot be undone. All associated activities, participant records, polls, and quiz answers will be permanently erased.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-3 pt-3">
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={() => setEventToDelete(null)}
+                className="flex-1 py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs border border-slate-700 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={handleConfirmDelete}
+                className="flex-1 py-2.5 px-4 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs shadow-lg shadow-red-950 transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{deleting ? "Deleting..." : "Yes, Delete Event"}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* QR Modal */}
       {selectedQrEvent && (
         <QrModal
@@ -457,3 +533,4 @@ export const DashboardPage: React.FC = () => {
     </div>
   );
 };
+
