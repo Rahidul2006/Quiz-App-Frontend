@@ -43,7 +43,7 @@ export const PresentationPage: React.FC = () => {
 
       // Load participant list for the cloud
       try {
-        const pList = await api.get(`/participants/event/${eventId}`);
+        const pList = await api.get(`/events/${eventId}/participants`);
         if (Array.isArray(pList)) {
           setParticipants(pList);
           if (pList.length > (ev.participant_count || 0)) {
@@ -128,10 +128,18 @@ export const PresentationPage: React.FC = () => {
       });
 
       socket.on("participant:joined", (data: any) => {
-        setParticipantCount((prev) => prev + 1);
+        if (typeof data?.count === "number") {
+          setParticipantCount(data.count);
+        } else {
+          setParticipantCount((prev) => prev + 1);
+        }
         if (data?.participant) {
           setParticipants((prev) => {
-            const exists = prev.some((p) => p.id === data.participant.id || p.name.toLowerCase() === data.participant.name.toLowerCase());
+            const exists = prev.some(
+              (p) =>
+                (p.id && data.participant.id && p.id === data.participant.id) ||
+                p.name?.toLowerCase() === data.participant.name?.toLowerCase()
+            );
             if (!exists) {
               return [...prev, data.participant];
             }
@@ -364,6 +372,7 @@ export const PresentationPage: React.FC = () => {
               <ParticipantNameCloud
                 participants={participants}
                 maxDisplay={50}
+                variant="presentation"
                 className="w-full h-full"
               />
             </div>
