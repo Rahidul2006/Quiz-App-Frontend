@@ -27,6 +27,7 @@ import {
   ChevronDown,
   ShieldCheck,
   Trophy,
+  Database,
 } from "lucide-react";
 import { api } from "../../services/api";
 import {
@@ -90,6 +91,12 @@ export const JudgingAdminPage: React.FC = () => {
   // Team detail breakdown modal
   const [selectedTeamDetail, setSelectedTeamDetail] = useState<TeamScoreDetailData | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
+
+  // CodeCraft DB live sync & preview state
+  const [syncingCodecraft, setSyncingCodecraft] = useState(false);
+  const [showCodecraftPreviewModal, setShowCodecraftPreviewModal] = useState(false);
+  const [codecraftLiveTeams, setCodecraftLiveTeams] = useState<any[]>([]);
+  const [loadingCodecraftLive, setLoadingCodecraftLive] = useState(false);
 
   // Copied alert helper
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -321,6 +328,38 @@ export const JudgingAdminPage: React.FC = () => {
       setTeams((prev) => prev.filter((t) => (t.id || t._id) !== teamId));
     } catch (err: any) {
       setError(err.message || "Failed to delete team");
+    }
+  };
+
+  // Sync teams directly from external CodeCraft MongoDB URI (Read-Only)
+  const handleSyncFromCodecraft = async () => {
+    if (!selectedRoundId) return;
+    setSyncingCodecraft(true);
+    setError(null);
+    try {
+      const res = await api.post(`/judging/rounds/${selectedRoundId}/sync-codecraft-teams`, {});
+      setSuccessMsg(res.message || "Teams successfully fetched and synced from CodeCraft DB.");
+      setTimeout(() => setSuccessMsg(null), 4000);
+      await loadRoundData();
+    } catch (err: any) {
+      setError(err.message || "Failed to sync teams from CodeCraft DB");
+    } finally {
+      setSyncingCodecraft(false);
+    }
+  };
+
+  // Live preview teams from external CodeCraft MongoDB URI
+  const handleOpenCodecraftPreview = async () => {
+    setShowCodecraftPreviewModal(true);
+    setLoadingCodecraftLive(true);
+    setError(null);
+    try {
+      const res = await api.get("/judging/codecraft-teams");
+      setCodecraftLiveTeams(res.teams || []);
+    } catch (err: any) {
+      setError(err.message || "Failed to fetch live CodeCraft teams");
+    } finally {
+      setLoadingCodecraftLive(false);
     }
   };
 
@@ -829,78 +868,141 @@ export const JudgingAdminPage: React.FC = () => {
         {/* ========================================================= */}
         {activeTab === "teams" && (
           <div className="space-y-6">
-            <div className="flex justify-between items-center">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
-                <h2 className="text-lg font-black text-white">Teams ({teams.length})</h2>
-                <p className="text-xs text-slate-400">Evaluation entities for this judging round.</p>
+                <div className="flex items-center gap-2 mb-1 flex-wrap">
+                  <h2 className="text-lg font-black text-white">Teams ({teams.length})</h2>
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[11px] font-mono font-semibold">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    CodeCraft DB Live (Read-Only)
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400">
+                  Evaluation entities for this judging round. Teams automatically refresh from CodeCraft MongoDB.
+                </p>
               </div>
-              <button
-                onClick={() => {
-                  setEditingTeamId(null);
-                  setTeamCode(`TEAM-${String(teams.length + 1).padStart(3, "0")}`);
-                  setTeamName("");
-                  setTeamProject("");
-                  setTeamMembers("");
-                  setShowTeamModal(true);
-                }}
-                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-2 shadow-md shadow-indigo-950/40"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Add Team</span>
-              </button>
+
+              <div className="flex items-center flex-wrap gap-2">
+                <button
+                  onClick={handleOpenCodecraftPreview}
+                  className="px-3.5 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 border border-slate-700/80 text-xs font-semibold flex items-center gap-2 transition-all shadow-sm"
+                  title="Inspect raw teams directly from the CodeCraft MongoDB cluster"
+                >
+                  <Database className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Inspect CodeCraft DB</span>
+                </button>
+
+                <button
+                  onClick={handleSyncFromCodecraft}
+                  disabled={syncingCodecraft}
+                  className="px-3.5 py-2 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-bold flex items-center gap-2 transition-all shadow-sm disabled:opacity-50"
+                  title="Manually trigger immediate refresh and sync from CodeCraft MongoDB"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${syncingCodecraft ? "animate-spin text-indigo-400" : ""}`} />
+                  <span>{syncingCodecraft ? "Fetching..." : "Sync from CodeCraft"}</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setEditingTeamId(null);
+                    setTeamCode(`TEAM-${String(teams.length + 1).padStart(3, "0")}`);
+                    setTeamName("");
+                    setTeamProject("");
+                    setTeamMembers("");
+                    setShowTeamModal(true);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-2 shadow-md shadow-indigo-950/40 transition-all"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Add Team</span>
+                </button>
+              </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {teams.map((t) => (
-                <div
-                  key={t.id || t._id}
-                  className="p-5 rounded-2xl bg-[#0e131f] border border-slate-800 flex flex-col justify-between"
+            {/* Empty State when no teams yet */}
+            {teams.length === 0 ? (
+              <div className="p-12 text-center border border-dashed border-slate-800 rounded-3xl bg-[#0c1017]/50 flex flex-col items-center justify-center">
+                <div className="w-14 h-14 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 mb-4 shadow-lg shadow-indigo-950/20">
+                  <Database className="w-7 h-7" />
+                </div>
+                <h3 className="text-base font-bold text-white mb-1">No Teams in this Round Yet</h3>
+                <p className="text-xs text-slate-400 max-w-md mb-5">
+                  Teams are fetched directly from your external CodeCraft MongoDB URI (in 100% read-only mode). Click below to immediately pull all teams.
+                </p>
+                <button
+                  onClick={handleSyncFromCodecraft}
+                  disabled={syncingCodecraft}
+                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-xs flex items-center gap-2 shadow-lg shadow-indigo-950/50 transition-all"
                 >
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700/60">
-                        {t.teamCode}
-                      </span>
-                      <div className="flex items-center gap-1">
+                  <RefreshCw className={`w-4 h-4 ${syncingCodecraft ? "animate-spin" : ""}`} />
+                  <span>{syncingCodecraft ? "Fetching CodeCraft Teams..." : "Fetch Teams from CodeCraft DB"}</span>
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {teams.map((t) => {
+                  const isCodecraftTeam = t.teamCode?.startsWith("CC-");
+                  return (
+                    <div
+                      key={t.id || t._id}
+                      className="p-5 rounded-2xl bg-[#0e131f] border border-slate-800/90 hover:border-slate-700/80 transition-all flex flex-col justify-between"
+                    >
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700/60">
+                              {t.teamCode}
+                            </span>
+                            {isCodecraftTeam && (
+                              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                                CodeCraft
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => {
+                                setEditingTeamId(getId(t));
+                                setTeamCode(t.teamCode);
+                                setTeamName(t.teamName);
+                                setTeamProject(t.projectName);
+                                setTeamMembers(t.members || "");
+                                setShowTeamModal(true);
+                              }}
+                              className="p-1 text-slate-500 hover:text-indigo-400"
+                              title="Edit team"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteTeam(getId(t))}
+                              className="p-1 text-slate-500 hover:text-rose-400"
+                              title="Delete team"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        <h3 className="text-base font-black text-white">{t.teamName}</h3>
+                        <p className="text-xs font-semibold text-indigo-300 mt-1">{t.projectName}</p>
+                        {t.members && <p className="text-[11px] text-slate-400 mt-2 line-clamp-3">{t.members}</p>}
+                      </div>
+
+                      <div className="pt-3 mt-4 border-t border-slate-800/80 flex items-center justify-between">
                         <button
-                          onClick={() => {
-                            setEditingTeamId(getId(t));
-                            setTeamCode(t.teamCode);
-                            setTeamName(t.teamName);
-                            setTeamProject(t.projectName);
-                            setTeamMembers(t.members || "");
-                            setShowTeamModal(true);
-                          }}
-                          className="p-1 text-slate-500 hover:text-indigo-400"
+                          onClick={() => handleViewTeamDetail(getId(t))}
+                          className="text-xs text-indigo-400 hover:text-indigo-300 font-semibold flex items-center gap-1"
                         >
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => handleDeleteTeam(getId(t))}
-                          className="p-1 text-slate-500 hover:text-rose-400"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>View Scores</span>
                         </button>
                       </div>
                     </div>
-
-                    <h3 className="text-base font-black text-white">{t.teamName}</h3>
-                    <p className="text-xs font-semibold text-indigo-300 mt-1">{t.projectName}</p>
-                    {t.members && <p className="text-[11px] text-slate-400 mt-2 line-clamp-2">{t.members}</p>}
-                  </div>
-
-                  <div className="pt-3 mt-4 border-t border-slate-800/80 flex items-center justify-between">
-                    <button
-                      onClick={() => handleViewTeamDetail(getId(t))}
-                      className="text-xs text-indigo-400 hover:text-indigo-300 font-semibold flex items-center gap-1"
-                    >
-                      <Eye className="w-3.5 h-3.5" />
-                      <span>View Scores</span>
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 
@@ -1694,6 +1796,140 @@ export const JudgingAdminPage: React.FC = () => {
                     </div>
                   ))
                 )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ========================================================= */}
+      {/* MODAL: CODECRAFT LIVE CLUSTER INSPECTOR (READ-ONLY) */}
+      {/* ========================================================= */}
+      <AnimatePresence>
+        {showCodecraftPreviewModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="w-full max-w-4xl bg-[#0e131f] border border-slate-800 rounded-3xl p-6 sm:p-7 shadow-2xl my-8 max-h-[90vh] flex flex-col"
+            >
+              {/* Modal Header */}
+              <div className="flex items-start justify-between gap-4 pb-4 border-b border-slate-800/80">
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <div className="w-7 h-7 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
+                      <Database className="w-4 h-4" />
+                    </div>
+                    <h3 className="text-lg font-black text-white">CodeCraft MongoDB Cluster Roster</h3>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold">
+                      Strictly Read-Only
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 font-mono">
+                    cluster0.66pfalv.mongodb.net/codecraft • Fetched directly from remote URI
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowCodecraftPreviewModal(false)}
+                  className="p-1.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-white transition-colors text-xs"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Modal Body: Teams List */}
+              <div className="flex-1 overflow-y-auto py-5 space-y-4 pr-1">
+                {loadingCodecraftLive ? (
+                  <div className="py-16 text-center text-slate-400">
+                    <RefreshCw className="w-7 h-7 animate-spin mx-auto mb-3 text-indigo-400" />
+                    <p className="text-xs font-semibold">Connecting to CodeCraft cluster & fetching teams data...</p>
+                  </div>
+                ) : codecraftLiveTeams.length === 0 ? (
+                  <div className="py-16 text-center border border-dashed border-slate-800 rounded-2xl bg-[#080c14]/40">
+                    <p className="text-sm font-bold text-slate-300">No teams found in CodeCraft cluster</p>
+                  </div>
+                ) : (
+                  codecraftLiveTeams.map((team, idx) => (
+                    <div
+                      key={team.teamName || idx}
+                      className="p-4 rounded-2xl bg-[#080c14] border border-slate-800/90 hover:border-indigo-500/30 transition-all"
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-slate-800 text-indigo-300 border border-slate-700">
+                            {team.teamCode}
+                          </span>
+                          <h4 className="text-base font-black text-white">{team.teamName}</h4>
+                          <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-400">
+                            {team.memberCount} {team.memberCount === 1 ? "Member" : "Members"}
+                          </span>
+                        </div>
+                        <span className="text-xs font-semibold text-indigo-300">
+                          {team.projectName}
+                        </span>
+                      </div>
+
+                      {/* Members Roster Pills */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3 pt-3 border-t border-slate-800/60">
+                        {team.memberDetails && team.memberDetails.map((member: any, mIdx: number) => (
+                          <div
+                            key={member.email || mIdx}
+                            className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800/60 flex items-start justify-between gap-2 text-xs"
+                          >
+                            <div>
+                              <p className="font-bold text-slate-200 flex items-center gap-1.5">
+                                <span>{member.name}</span>
+                                {member.isLeader && (
+                                  <span className="text-[9px] font-mono uppercase font-bold px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                                    Leader
+                                  </span>
+                                )}
+                              </p>
+                              {member.email && (
+                                <p className="text-[11px] font-mono text-slate-400">{member.email}</p>
+                              )}
+                              {member.college && (
+                                <p className="text-[10px] text-slate-500 mt-0.5 line-clamp-1">{member.college}</p>
+                              )}
+                            </div>
+                            {member.branch && (
+                              <span className="text-[10px] font-mono text-slate-400 px-1.5 py-0.5 rounded bg-slate-800">
+                                {member.branch}
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="pt-4 border-t border-slate-800/80 flex flex-col sm:flex-row items-center justify-between gap-3">
+                <p className="text-xs text-slate-400">
+                  Total <strong className="text-white font-mono">{codecraftLiveTeams.length}</strong> teams ready for evaluation.
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setShowCodecraftPreviewModal(false)}
+                    className="px-4 py-2 rounded-xl text-slate-400 hover:text-white text-xs transition-colors"
+                  >
+                    Close
+                  </button>
+                  <button
+                    onClick={async () => {
+                      await handleSyncFromCodecraft();
+                      setShowCodecraftPreviewModal(false);
+                    }}
+                    disabled={syncingCodecraft}
+                    className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-indigo-950/40"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${syncingCodecraft ? "animate-spin" : ""}`} />
+                    <span>Sync All to Active Round</span>
+                  </button>
+                </div>
               </div>
             </motion.div>
           </div>
