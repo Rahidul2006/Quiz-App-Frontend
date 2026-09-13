@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   Scale,
   LogOut,
@@ -13,9 +13,13 @@ import {
   Sparkles,
   Users,
   FolderGit2,
+  RefreshCw,
+  Radio,
+  AlertTriangle,
 } from "lucide-react";
 import { useJudgeAuth } from "../../context/JudgeAuthContext";
 import { judgeApi } from "../../services/judgeApi";
+import { getSocket, joinJudgingRoom, leaveJudgingRoom } from "../../services/socket";
 
 interface AssignedTeamItem {
   id: string;
@@ -29,20 +33,45 @@ interface AssignedTeamItem {
   draftScore: number | null;
 }
 
+interface RoundInfo {
+  id: string;
+  _id?: string;
+  name: string;
+  status?: string;
+  isLocked: boolean;
+  evaluationMode?: string;
+  allowJudgeEditAfterSubmit?: boolean;
+}
+
 export const JudgeDashboardPage: React.FC = () => {
   const navigate = useNavigate();
   const { judge, logout } = useJudgeAuth();
 
   const [loading, setLoading] = useState(true);
+  const [isSwitching, setIsSwitching] = useState(false);
+  const [isJudgeDisabled, setIsJudgeDisabled] = useState(false);
+
   const [teams, setTeams] = useState<AssignedTeamItem[]>([]);
   const [stats, setStats] = useState({ total: 0, completed: 0, draft: 0, pending: 0 });
-  const [roundInfo, setRoundInfo] = useState<{ id: string; name: string; isLocked: boolean } | null>(null);
+  const [roundInfo, setRoundInfo] = useState<RoundInfo | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ALL" | "PENDING" | "DRAFT" | "SUBMITTED">("ALL");
+  const [switchBannerText, setSwitchBannerText] = useState<string | null>(null);
+  const bannerTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const loadData = async () => {
+  // Authoritative data fetcher — directly from the database API
+  const loadData = useCallback(async (isSwitch = false) => {
     try {
+      if (isSwitch) {
+        setIsSwitching(true);
+      } else {
+        setLoading(true);
+      }
+
+      // Query database for authoritative active round data
       const data = await judgeApi.get("/judge/assigned-teams");
+
+      // Replace entire dashboard state with the API response
       setTeams(data.teams || []);
       setStats(data.stats || { total: 0, completed: 0, draft: 0, pending: 0 });
       setRoundInfo(data.round || null);
@@ -50,12 +79,96 @@ export const JudgeDashboardPage: React.FC = () => {
       console.error("Failed to load assigned teams:", err);
     } finally {
       setLoading(false);
+      setIsSwitching(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    loadData();
-  }, []);
+    // Initial load
+    loadData(false);
+
+    // Join judging room
+    joinJudgingRoom();
+    const socket = getSocket();
+
+    // 1. Immediate round switch: clear old data immediately & fetch active round from database
+    const handleRoundSwitch = (data?: { roundName?: string }) => {
+      // Clear all old round data immediately to avoid mixing
+      setTeams([]);
+      setStats({ total: 0, completed: 0, draft: 0, pending: 0 });
+      setRoundInfo(null);
+
+      if (data?.roundName) {
+        setSwitchBannerText(`Admin switched active round to: "${data.roundName}"`);
+        if (bannerTimeoutRef.current) clearTimeout(bannerTimeoutRef.current);
+        bannerTimeoutRef.current = setTimeout(() => setSwitchBannerText(null), 3500);
+      }
+
+      // Immediately call API with ZERO delay
+      loadData(true);
+    };
+
+    // 2. Lock status change in real time
+    const handleLockChange = (data: { roundId: string; isLocked: boolean; status?: string }) => {
+      setRoundInfo((prev) => {
+        if (!prev) return prev;
+        if (prev.id === data.roundId || (prev as any)._id === data.roundId) {
+          return {
+            ...prev,
+            isLocked: data.isLocked,
+            status: data.status || (data.isLocked ? "locked" : "active"),
+          };
+        }
+        return prev;
+      });
+    };
+
+    // 3. Round settings or assignments updated
+    const handleRoundUpdated = () => {
+      loadData(false);
+    };
+
+    const handleAssignmentsUpdated = () => {
+      loadData(false);
+    };
+
+    const handleCriteriaUpdated = () => {
+      loadData(false);
+    };
+
+    // 4. Judge disabled / enabled by admin
+    const handleJudgeStatusChanged = (data: { judgeId: string; status: string }) => {
+      if (judge && (judge.id === data.judgeId || (judge as any)._id === data.judgeId)) {
+        setIsJudgeDisabled(data.status === "disabled");
+      }
+    };
+
+    // 5. Auto re-fetch active round on socket connect / reconnect
+    const handleSocketConnect = () => {
+      joinJudgingRoom();
+      loadData(false);
+    };
+
+    socket.on("judging:round_switched", handleRoundSwitch);
+    socket.on("judging:lock_changed", handleLockChange);
+    socket.on("judging:round_updated", handleRoundUpdated);
+    socket.on("judging:assignments_updated", handleAssignmentsUpdated);
+    socket.on("judging:criteria_updated", handleCriteriaUpdated);
+    socket.on("judging:judge_status_changed", handleJudgeStatusChanged);
+    socket.on("connect", handleSocketConnect);
+
+    return () => {
+      socket.off("judging:round_switched", handleRoundSwitch);
+      socket.off("judging:lock_changed", handleLockChange);
+      socket.off("judging:round_updated", handleRoundUpdated);
+      socket.off("judging:assignments_updated", handleAssignmentsUpdated);
+      socket.off("judging:criteria_updated", handleCriteriaUpdated);
+      socket.off("judging:judge_status_changed", handleJudgeStatusChanged);
+      socket.off("connect", handleSocketConnect);
+      leaveJudgingRoom();
+      if (bannerTimeoutRef.current) clearTimeout(bannerTimeoutRef.current);
+    };
+  }, [loadData, judge]);
 
   const handleLogout = () => {
     logout();
@@ -77,6 +190,21 @@ export const JudgeDashboardPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#080c14] text-slate-100 flex flex-col selection:bg-indigo-500/30 selection:text-indigo-300">
+      {/* Toast Notification Banner */}
+      <AnimatePresence>
+        {switchBannerText && (
+          <motion.div
+            initial={{ opacity: 0, y: -40 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -40 }}
+            className="fixed top-0 left-0 right-0 z-50 bg-gradient-to-r from-indigo-600 to-purple-600 text-white text-center py-2.5 px-4 text-xs font-bold flex items-center justify-center gap-2 shadow-xl shadow-indigo-950/50"
+          >
+            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            <span>{switchBannerText}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Top Navbar */}
       <header className="border-b border-slate-800/80 bg-[#0c1017]/80 backdrop-blur-md sticky top-0 z-30">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
@@ -86,7 +214,7 @@ export const JudgeDashboardPage: React.FC = () => {
             </div>
             <div>
               <span className="font-black text-base tracking-tight text-white">
-                Crowd<span className="text-indigo-400">Pulse</span>
+                quz<span className="text-indigo-400">antagonic</span>
               </span>
               <span className="ml-2 text-[10px] font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
                 Judge Portal
@@ -113,24 +241,73 @@ export const JudgeDashboardPage: React.FC = () => {
 
       {/* Main Content */}
       <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 py-8">
-        {/* Welcome & Round Info */}
-        <div className="mb-8">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        {/* Deactivated Notice if Disabled */}
+        {isJudgeDisabled && (
+          <div className="mb-6 p-4 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-300 flex items-center gap-3 shadow-lg shadow-rose-950/20">
+            <AlertTriangle className="w-5 h-5 text-rose-400 flex-shrink-0" />
             <div>
-              <div className="flex items-center gap-2 text-indigo-400 text-xs font-bold uppercase tracking-wider mb-1">
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>{roundInfo?.name || "Active Judging Round"}</span>
-                {roundInfo?.isLocked && (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[11px]">
-                    <Lock className="w-3 h-3" /> Locked
+              <p className="font-bold text-xs">Judge Account Disabled</p>
+              <p className="text-[11px] text-rose-300/80">
+                Your judge account has been deactivated by the administrator. Evaluations and submissions are currently blocked.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* ACTIVE ROUND DISPLAY CARD */}
+        <div className="mb-6 p-5 rounded-2xl bg-[#0e131f] border border-slate-800/90 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-start sm:items-center gap-3.5">
+            <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 flex-shrink-0">
+              <Radio className="w-5 h-5 animate-pulse" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 mb-1 flex-wrap">
+                <span className="text-[10px] font-mono font-black uppercase tracking-wider text-indigo-400">
+                  ACTIVE ROUND
+                </span>
+                {roundInfo?.isLocked ? (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[10px] font-bold">
+                    <Lock className="w-3 h-3" /> LOCKED
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-bold">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    ACTIVE
+                  </span>
+                )}
+                {roundInfo?.evaluationMode && (
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700">
+                    {roundInfo.evaluationMode === "assigned" ? "Assigned Only" : "All Teams"}
                   </span>
                 )}
               </div>
+              <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight">
+                {roundInfo?.name || "No Active Judging Round"}
+              </h2>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => loadData(false)}
+              className="px-3.5 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition-colors"
+              title="Sync latest state with database"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin text-indigo-400" : ""}`} />
+              <span>Sync Live</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Welcome & Progress */}
+        <div className="mb-8">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
               <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
                 Welcome, {judge?.name || "Judge"}
               </h1>
               <p className="text-xs sm:text-sm text-slate-400 mt-1">
-                Review assigned teams, score dynamic criteria, and submit your official evaluations.
+                Review assigned teams, score dynamic criteria, and submit your evaluations for the current active round.
               </p>
             </div>
 
@@ -204,8 +381,16 @@ export const JudgeDashboardPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Assigned Teams List */}
-        {loading ? (
+        {/* Dynamic Switching Transition Skeleton */}
+        {isSwitching ? (
+          <div className="py-16 text-center border border-dashed border-indigo-500/30 rounded-3xl bg-[#0c1017]/70 flex flex-col items-center justify-center animate-pulse">
+            <RefreshCw className="w-8 h-8 text-indigo-400 animate-spin mb-3" />
+            <h3 className="text-base font-bold text-white mb-1">Switching Judging Round...</h3>
+            <p className="text-xs text-indigo-300 font-mono">
+              Loading active round teams and criteria from database
+            </p>
+          </div>
+        ) : loading ? (
           <div className="py-16 text-center text-slate-500">
             <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
             <p className="text-xs">Loading assigned teams...</p>
@@ -215,7 +400,7 @@ export const JudgeDashboardPage: React.FC = () => {
             <FolderGit2 className="w-10 h-10 text-slate-600 mx-auto mb-3" />
             <p className="text-sm font-bold text-slate-300">No teams found</p>
             <p className="text-xs text-slate-500 mt-1">
-              {searchQuery ? "Try clearing your search query" : "No teams have been assigned to your evaluation roster yet."}
+              {searchQuery ? "Try clearing your search query" : "No teams are currently assigned to your evaluation roster in this round."}
             </p>
           </div>
         ) : (
@@ -286,7 +471,9 @@ export const JudgeDashboardPage: React.FC = () => {
                     <Link
                       to={`/judge/evaluate/${team.id || team._id}`}
                       className={`px-3.5 py-1.5 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all ${
-                        isCompleted
+                        isJudgeDisabled
+                          ? "opacity-50 pointer-events-none bg-slate-800 text-slate-500"
+                          : isCompleted
                           ? "bg-slate-800 hover:bg-slate-700 text-slate-200"
                           : isDraft
                           ? "bg-amber-500 hover:bg-amber-400 text-slate-950 font-black shadow-md shadow-amber-950/40"

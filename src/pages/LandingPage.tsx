@@ -16,6 +16,7 @@ import {
   Tv,
   LayoutDashboard,
   TrendingUp,
+  Scale,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 
@@ -73,7 +74,7 @@ export const LandingPage: React.FC = () => {
               <Zap className="w-5 h-5 text-slate-950 fill-current" />
             </div>
             <span className="font-black text-xl tracking-tight text-white">
-              Crowd<span className="text-emerald-400">Pulse</span>
+              quz<span className="text-emerald-400">antagonic</span>
             </span>
           </Link>
 
@@ -84,6 +85,14 @@ export const LandingPage: React.FC = () => {
             >
               Join via PIN
             </Link>
+
+              <Link
+                to="/judge/login"
+                className="hidden sm:flex items-center gap-1.5 text-xs font-semibold text-indigo-300 hover:text-white px-3 py-1.5 rounded-xl hover:bg-indigo-500/10 border border-indigo-500/20 hover:border-indigo-500/40 transition-all"
+              >
+                <Scale className="w-3.5 h-3.5" />
+                <span>Judge Portal</span>
+              </Link>
 
             {user ? (
               <Link
@@ -183,10 +192,10 @@ export const LandingPage: React.FC = () => {
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <Zap className="w-4 h-4 text-emerald-400" />
-            <span className="font-bold text-slate-300">CrowdPulse</span>
+            <span className="font-bold text-slate-300">quzantagonic</span>
             <span>— Real-time event voting & quiz platform.</span>
           </div>
-          <p>© 2026 CrowdPulse. Built for conferences, meetups, and high-energy live events.</p>
+          <p>© 2026 quzantagonic. Built for conferences, meetups, and high-energy live events.</p>
         </div>
       </footer>
     </div>

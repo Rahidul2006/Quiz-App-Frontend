@@ -124,7 +124,7 @@ export const DashboardPage: React.FC = () => {
                 <Zap className="w-4 h-4 text-slate-950 fill-current" />
               </div>
               <span className="font-black text-lg tracking-tight text-white">
-                Crowd<span className="text-emerald-400">Pulse</span>
+                quz<span className="text-emerald-400">antagonic</span>
               </span>
             </Link>
             <span className="text-[11px] font-mono font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700/80">
