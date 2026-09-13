@@ -16,6 +16,7 @@ import {
   Tv,
   LayoutDashboard,
   TrendingUp,
+  Scale,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 
@@ -84,6 +85,14 @@ export const LandingPage: React.FC = () => {
             >
               Join via PIN
             </Link>
+
+              <Link
+                to="/judge/login"
+                className="hidden sm:flex items-center gap-1.5 text-xs font-semibold text-indigo-300 hover:text-white px-3 py-1.5 rounded-xl hover:bg-indigo-500/10 border border-indigo-500/20 hover:border-indigo-500/40 transition-all"
+              >
+                <Scale className="w-3.5 h-3.5" />
+                <span>Judge Portal</span>
+              </Link>
 
             {user ? (
               <Link

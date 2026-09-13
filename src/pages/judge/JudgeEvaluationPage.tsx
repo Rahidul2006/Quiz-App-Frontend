@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -14,8 +14,12 @@ import {
   FolderGit2,
   HelpCircle,
   Info,
+  Bell,
+  RefreshCw,
+  ArrowRight,
 } from "lucide-react";
 import { judgeApi } from "../../services/judgeApi";
+import { getSocket, joinJudgingRoom, leaveJudgingRoom } from "../../services/socket";
 
 interface CriterionItem {
   id: string;
@@ -44,12 +48,24 @@ export const JudgeEvaluationPage: React.FC = () => {
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   const [team, setTeam] = useState<any>(null);
-  const [round, setRound] = useState<any>(null);
+  const [round, setRound] = useState<{
+    id: string;
+    _id?: string;
+    name: string;
+    isLocked: boolean;
+    allowJudgeEditAfterSubmit: boolean;
+    totalMaxScore: number;
+  } | null>(null);
+
+  const currentRoundIdRef = useRef<string | null>(null);
+
   const [criteria, setCriteria] = useState<CriterionItem[]>([]);
   const [scores, setScores] = useState<Record<string, number>>({});
   const [comments, setComments] = useState("");
   const [existingStatus, setExistingStatus] = useState<"PENDING" | "DRAFT" | "SUBMITTED">("PENDING");
   const [isLocked, setIsLocked] = useState(false);
+  const [roundSwitchedNotice, setRoundSwitchedNotice] = useState<string | null>(null);
+  const [switchedNewRoundName, setSwitchedNewRoundName] = useState<string | null>(null);
 
   // Submit confirmation modal
   const [showConfirmModal, setShowConfirmModal] = useState(false);
@@ -62,6 +78,7 @@ export const JudgeEvaluationPage: React.FC = () => {
       const data = await judgeApi.get(`/judge/teams/${teamId}/evaluate`);
       setTeam(data.team);
       setRound(data.round);
+      currentRoundIdRef.current = data.round?.id || data.round?._id || null;
       setCriteria(data.criteria || []);
       setIsLocked(data.isLocked);
 
@@ -94,6 +111,36 @@ export const JudgeEvaluationPage: React.FC = () => {
   useEffect(() => {
     loadData();
   }, [teamId]);
+
+  // Subscribe to real-time round switching & locking from admin
+  useEffect(() => {
+    joinJudgingRoom();
+    const socket = getSocket();
+
+    const handleRoundSwitch = (data: { roundId: string; roundName?: string }) => {
+      // Check if current evaluation belongs to a different round
+      if (!currentRoundIdRef.current || currentRoundIdRef.current !== data.roundId) {
+        setIsLocked(true);
+        setSwitchedNewRoundName(data.roundName || "New Active Round");
+        setRoundSwitchedNotice("The administrator switched the active judging round.");
+      }
+    };
+
+    const handleLockChange = (data: { roundId: string; isLocked: boolean }) => {
+      if (currentRoundIdRef.current && currentRoundIdRef.current === data.roundId) {
+        setIsLocked(data.isLocked);
+      }
+    };
+
+    socket.on("judging:round_switched", handleRoundSwitch);
+    socket.on("judging:lock_changed", handleLockChange);
+
+    return () => {
+      socket.off("judging:round_switched", handleRoundSwitch);
+      socket.off("judging:lock_changed", handleLockChange);
+      leaveJudgingRoom();
+    };
+  }, []);
 
   const handleScoreChange = (criterionId: string, maxScore: number, val: number) => {
     if (isLocked) return;
@@ -163,7 +210,14 @@ export const JudgeEvaluationPage: React.FC = () => {
       }, 1500);
     } catch (err: any) {
       setShowConfirmModal(false);
-      setError(err.message || "Failed to submit evaluation");
+      const is409 = err.response?.status === 409 || err.status === 409;
+      if (is409) {
+        setIsLocked(true);
+        setSwitchedNewRoundName(err.response?.data?.activeRoundName || "New Round");
+        setError(err.response?.data?.message || "This judging round is no longer active.");
+      } else {
+        setError(err.message || "Failed to submit evaluation");
+      }
     } finally {
       setSubmitting(false);
     }
@@ -196,6 +250,26 @@ export const JudgeEvaluationPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#080c14] text-slate-100 flex flex-col selection:bg-indigo-500/30 selection:text-indigo-300">
+      {/* Round Switched Notice */}
+      <AnimatePresence>
+        {roundSwitchedNotice && (
+          <motion.div
+            initial={{ opacity: 0, y: -40 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="fixed top-0 left-0 right-0 z-50 bg-amber-500 text-slate-950 text-center py-3 px-4 text-xs font-bold flex items-center justify-center gap-2 shadow-lg"
+          >
+            <Bell className="w-3.5 h-3.5 animate-pulse" />
+            {roundSwitchedNotice}
+            <Link
+              to="/judge/dashboard"
+              className="ml-3 underline underline-offset-2 hover:opacity-80"
+            >
+              Go to Dashboard →
+            </Link>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Top Bar */}
       <header className="border-b border-slate-800/80 bg-[#0c1017]/80 backdrop-blur-md sticky top-0 z-30">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
@@ -450,6 +524,45 @@ export const JudgeEvaluationPage: React.FC = () => {
                   )}
                 </button>
               </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ========================================================= */}
+      {/* MODAL: ROUND SWITCHED OVERLAY */}
+      {/* ========================================================= */}
+      <AnimatePresence>
+        {switchedNewRoundName && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="w-full max-w-md bg-[#0e131f] border border-indigo-500/30 rounded-3xl p-6 sm:p-7 shadow-2xl text-center"
+            >
+              <div className="w-14 h-14 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 mx-auto mb-4 shadow-lg shadow-indigo-950/30">
+                <RefreshCw className="w-7 h-7 animate-spin" />
+              </div>
+              <h3 className="text-lg font-black text-white mb-2">
+                🔄 Judging Round Changed
+              </h3>
+              <p className="text-xs text-slate-300 mb-2 leading-relaxed">
+                The administrator switched the active judging round. Your judging session is now moving to:
+              </p>
+              <div className="py-2.5 px-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 font-black text-sm mb-4">
+                {switchedNewRoundName}
+              </div>
+              <p className="text-[11px] text-slate-400 mb-6">
+                Your draft or evaluations for this team remain securely stored in the database.
+              </p>
+              <button
+                onClick={() => navigate("/judge/dashboard")}
+                className="w-full py-3 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-xs shadow-lg shadow-indigo-950/50 transition-all flex items-center justify-center gap-2"
+              >
+                <span>Continue to New Round</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
             </motion.div>
           </div>
         )}

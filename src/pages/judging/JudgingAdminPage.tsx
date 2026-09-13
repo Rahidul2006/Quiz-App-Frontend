@@ -28,6 +28,11 @@ import {
   ShieldCheck,
   Trophy,
   Database,
+  Globe,
+  Wifi,
+  Download,
+  RadioTower,
+  X,
 } from "lucide-react";
 import { api } from "../../services/api";
 import {
@@ -92,11 +97,20 @@ export const JudgingAdminPage: React.FC = () => {
   const [selectedTeamDetail, setSelectedTeamDetail] = useState<TeamScoreDetailData | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
 
-  // CodeCraft DB live sync & preview state
-  const [syncingCodecraft, setSyncingCodecraft] = useState(false);
-  const [showCodecraftPreviewModal, setShowCodecraftPreviewModal] = useState(false);
-  const [codecraftLiveTeams, setCodecraftLiveTeams] = useState<any[]>([]);
-  const [loadingCodecraftLive, setLoadingCodecraftLive] = useState(false);
+  // External DB Import state (admin-provided any MongoDB URI)
+  const [showExternalDbModal, setShowExternalDbModal] = useState(false);
+  const [extDbStep, setExtDbStep] = useState<"connect" | "preview" | "importing">("connect");
+  const [extDbUri, setExtDbUri] = useState("");
+  const [extDbName, setExtDbName] = useState("");
+  const [extDbConnecting, setExtDbConnecting] = useState(false);
+  const [extDbCollections, setExtDbCollections] = useState<string[]>([]);
+  const [extDbSelectedCollection, setExtDbSelectedCollection] = useState("");
+  const [extDbPreviewing, setExtDbPreviewing] = useState(false);
+  const [extDbPreviewTeams, setExtDbPreviewTeams] = useState<any[]>([]);
+  const [extDbImportingIds, setExtDbImportingIds] = useState<Set<number>>(new Set());
+  const [extDbImportedIds, setExtDbImportedIds] = useState<Set<number>>(new Set());
+  const [extDbError, setExtDbError] = useState<string | null>(null);
+  const [extDbTeamCodePrefix, setExtDbTeamCodePrefix] = useState("EXT");
 
   // Copied alert helper
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -331,36 +345,113 @@ export const JudgingAdminPage: React.FC = () => {
     }
   };
 
-  // Sync teams directly from external CodeCraft MongoDB URI (Read-Only)
-  const handleSyncFromCodecraft = async () => {
-    if (!selectedRoundId) return;
-    setSyncingCodecraft(true);
-    setError(null);
+  // Delete round
+  const handleDeleteRound = async () => {
+    if (!selectedRoundId || !currentRound) return;
+    if (!confirm(`Delete round "${currentRound.name}" and ALL its teams, criteria, assignments and evaluations? This CANNOT be undone.`)) return;
     try {
-      const res = await api.post(`/judging/rounds/${selectedRoundId}/sync-codecraft-teams`, {});
-      setSuccessMsg(res.message || "Teams successfully fetched and synced from CodeCraft DB.");
-      setTimeout(() => setSuccessMsg(null), 4000);
-      await loadRoundData();
+      await api.delete(`/judging/rounds/${selectedRoundId}`);
+      const remaining = rounds.filter((r) => (r.id || r._id) !== selectedRoundId);
+      setRounds(remaining);
+      setSelectedRoundId(remaining.length > 0 ? (remaining[0].id || remaining[0]._id || "") : "");
+      setSuccessMsg("Round deleted successfully.");
+      setTimeout(() => setSuccessMsg(null), 3000);
     } catch (err: any) {
-      setError(err.message || "Failed to sync teams from CodeCraft DB");
-    } finally {
-      setSyncingCodecraft(false);
+      setError(err.message || "Failed to delete round");
     }
   };
 
-  // Live preview teams from external CodeCraft MongoDB URI
-  const handleOpenCodecraftPreview = async () => {
-    setShowCodecraftPreviewModal(true);
-    setLoadingCodecraftLive(true);
-    setError(null);
+  // Set active round (broadcasts to judges via socket)
+  const handleSetActiveRound = async () => {
+    if (!selectedRoundId || !currentRound) return;
+    if (!confirm(`Switch active judging round to "${currentRound.name}"? All connected judges will automatically switch to this round in real-time.`)) return;
     try {
-      const res = await api.get("/judging/codecraft-teams");
-      setCodecraftLiveTeams(res.teams || []);
+      const res = await api.post(`/judging/rounds/${selectedRoundId}/set-active`, {});
+      // Update rounds status locally
+      setRounds((prev) => prev.map((r) => ({
+        ...r,
+        status: (r.id || r._id) === selectedRoundId ? "active" : (r.isLocked ? r.status : "draft"),
+      })));
+      setSuccessMsg(res.message || `Round "${currentRound.name}" is now ACTIVE. All judges notified!`);
+      setTimeout(() => setSuccessMsg(null), 4000);
     } catch (err: any) {
-      setError(err.message || "Failed to fetch live CodeCraft teams");
-    } finally {
-      setLoadingCodecraftLive(false);
+      setError(err.message || "Failed to set active round");
     }
+  };
+
+  // External DB Import handlers
+  const handleExtDbConnect = async () => {
+    if (!extDbUri.trim()) return;
+    setExtDbConnecting(true);
+    setExtDbError(null);
+    setExtDbCollections([]);
+    setExtDbPreviewTeams([]);
+    setExtDbSelectedCollection("");
+    try {
+      const res = await api.post("/judging/external-db/connect", {
+        uri: extDbUri.trim(),
+        dbName: extDbName.trim() || undefined,
+      });
+      setExtDbCollections(res.collections || []);
+      setExtDbStep("preview");
+    } catch (err: any) {
+      setExtDbError(err.message || "Failed to connect to external database.");
+    } finally {
+      setExtDbConnecting(false);
+    }
+  };
+
+  const handleExtDbPreview = async () => {
+    if (!extDbSelectedCollection) return;
+    setExtDbPreviewing(true);
+    setExtDbError(null);
+    setExtDbPreviewTeams([]);
+    setExtDbImportedIds(new Set());
+    try {
+      const res = await api.post("/judging/external-db/preview", {
+        uri: extDbUri.trim(),
+        dbName: extDbName.trim() || undefined,
+        collection: extDbSelectedCollection,
+      });
+      setExtDbPreviewTeams(res.teams || []);
+    } catch (err: any) {
+      setExtDbError(err.message || "Failed to preview teams from collection.");
+    } finally {
+      setExtDbPreviewing(false);
+    }
+  };
+
+  const handleImportOneTeam = async (team: any, idx: number) => {
+    if (!selectedRoundId) return;
+    setExtDbImportingIds((prev) => new Set([...prev, idx]));
+    try {
+      const imported = await api.post(`/judging/rounds/${selectedRoundId}/teams/import-one`, {
+        teamName: team.teamName,
+        projectName: team.projectName,
+        members: team.members,
+        memberDetails: team.memberDetails,
+        teamCodePrefix: extDbTeamCodePrefix || "EXT",
+      });
+      setExtDbImportedIds((prev) => new Set([...prev, idx]));
+      setTeams((prev) => {
+        const exists = prev.some((t) => (t.id || t._id) === (imported.id || imported._id));
+        return exists ? prev : [...prev, imported];
+      });
+    } catch (err: any) {
+      setExtDbError(err.message || "Failed to import team.");
+    } finally {
+      setExtDbImportingIds((prev) => { const s = new Set(prev); s.delete(idx); return s; });
+    }
+  };
+
+  const handleOpenExternalDbModal = () => {
+    setShowExternalDbModal(true);
+    setExtDbStep("connect");
+    setExtDbCollections([]);
+    setExtDbPreviewTeams([]);
+    setExtDbError(null);
+    setExtDbImportingIds(new Set());
+    setExtDbImportedIds(new Set());
   };
 
   // Criteria Create / Edit
@@ -531,7 +622,7 @@ export const JudgingAdminPage: React.FC = () => {
                 ) : (
                   rounds.map((r) => (
                     <option key={r.id || r._id} value={r.id || r._id} className="bg-[#0e131f] text-white">
-                      {r.name} {r.isLocked ? "🔒" : ""}
+                      {r.name} {r.isLocked ? "🔒" : ""} {r.status === "active" ? "✅" : ""}
                     </option>
                   ))
                 )}
@@ -546,6 +637,23 @@ export const JudgingAdminPage: React.FC = () => {
               <Plus className="w-4 h-4" />
               <span className="hidden sm:inline">New Round</span>
             </button>
+
+            {/* Active Round Status Badge or Set Active Button */}
+            {currentRound && currentRound.status === "active" ? (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-bold font-mono">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                ACTIVE ROUND
+              </span>
+            ) : currentRound && (
+              <button
+                onClick={handleSetActiveRound}
+                className="px-3.5 py-1.5 rounded-xl font-bold text-xs flex items-center gap-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-md shadow-emerald-950/40 transition-all"
+                title="Set as active round — switches all judges in real-time"
+              >
+                <RadioTower className="w-3.5 h-3.5" />
+                <span>Set Active</span>
+              </button>
+            )}
 
             {/* Lock / Unlock Toggle Button */}
             {currentRound && (
@@ -568,6 +676,17 @@ export const JudgingAdminPage: React.FC = () => {
                     <span>OPEN</span>
                   </>
                 )}
+              </button>
+            )}
+
+            {/* Delete Round */}
+            {currentRound && (
+              <button
+                onClick={handleDeleteRound}
+                className="p-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition-colors"
+                title="Delete this round (irreversible)"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
               </button>
             )}
           </div>
@@ -872,34 +991,24 @@ export const JudgingAdminPage: React.FC = () => {
               <div>
                 <div className="flex items-center gap-2 mb-1 flex-wrap">
                   <h2 className="text-lg font-black text-white">Teams ({teams.length})</h2>
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[11px] font-mono font-semibold">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    CodeCraft DB Live (Read-Only)
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-[11px] font-mono font-semibold">
+                    <Globe className="w-3 h-3 text-indigo-400" />
+                    External DB & Custom Teams
                   </span>
                 </div>
                 <p className="text-xs text-slate-400">
-                  Evaluation entities for this judging round. Teams automatically refresh from CodeCraft MongoDB.
+                  Evaluation teams for this judging round. Import directly from any external MongoDB database or create manually.
                 </p>
               </div>
 
               <div className="flex items-center flex-wrap gap-2">
                 <button
-                  onClick={handleOpenCodecraftPreview}
-                  className="px-3.5 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 border border-slate-700/80 text-xs font-semibold flex items-center gap-2 transition-all shadow-sm"
-                  title="Inspect raw teams directly from the CodeCraft MongoDB cluster"
+                  onClick={handleOpenExternalDbModal}
+                  className="px-3.5 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-indigo-300 border border-indigo-500/30 hover:border-indigo-500/50 text-xs font-semibold flex items-center gap-2 transition-all shadow-sm"
+                  title="Connect to any MongoDB URI and import teams one-by-one"
                 >
-                  <Database className="w-3.5 h-3.5 text-indigo-400" />
-                  <span>Inspect CodeCraft DB</span>
-                </button>
-
-                <button
-                  onClick={handleSyncFromCodecraft}
-                  disabled={syncingCodecraft}
-                  className="px-3.5 py-2 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-bold flex items-center gap-2 transition-all shadow-sm disabled:opacity-50"
-                  title="Manually trigger immediate refresh and sync from CodeCraft MongoDB"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${syncingCodecraft ? "animate-spin text-indigo-400" : ""}`} />
-                  <span>{syncingCodecraft ? "Fetching..." : "Sync from CodeCraft"}</span>
+                  <Globe className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Import from External DB</span>
                 </button>
 
                 <button
@@ -927,16 +1036,31 @@ export const JudgingAdminPage: React.FC = () => {
                 </div>
                 <h3 className="text-base font-bold text-white mb-1">No Teams in this Round Yet</h3>
                 <p className="text-xs text-slate-400 max-w-md mb-5">
-                  Teams are fetched directly from your external CodeCraft MongoDB URI (in 100% read-only mode). Click below to immediately pull all teams.
+                  Import teams directly from any external MongoDB database or add them manually.
                 </p>
-                <button
-                  onClick={handleSyncFromCodecraft}
-                  disabled={syncingCodecraft}
-                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-xs flex items-center gap-2 shadow-lg shadow-indigo-950/50 transition-all"
-                >
-                  <RefreshCw className={`w-4 h-4 ${syncingCodecraft ? "animate-spin" : ""}`} />
-                  <span>{syncingCodecraft ? "Fetching CodeCraft Teams..." : "Fetch Teams from CodeCraft DB"}</span>
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={handleOpenExternalDbModal}
+                    className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-xs flex items-center gap-2 shadow-lg shadow-indigo-950/50 transition-all"
+                  >
+                    <Globe className="w-4 h-4" />
+                    <span>Import from External DB</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setEditingTeamId(null);
+                      setTeamCode("TEAM-001");
+                      setTeamName("");
+                      setTeamProject("");
+                      setTeamMembers("");
+                      setShowTeamModal(true);
+                    }}
+                    className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs flex items-center gap-2 border border-slate-700 transition-all"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Add Manually</span>
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1803,10 +1927,10 @@ export const JudgingAdminPage: React.FC = () => {
       </AnimatePresence>
 
       {/* ========================================================= */}
-      {/* MODAL: CODECRAFT LIVE CLUSTER INSPECTOR (READ-ONLY) */}
+      {/* MODAL: EXTERNAL DB TEAM EXPLORER & IMPORTER */}
       {/* ========================================================= */}
       <AnimatePresence>
-        {showCodecraftPreviewModal && (
+        {showExternalDbModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
@@ -1819,117 +1943,316 @@ export const JudgingAdminPage: React.FC = () => {
                 <div>
                   <div className="flex items-center gap-2 mb-1">
                     <div className="w-7 h-7 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
-                      <Database className="w-4 h-4" />
+                      <Globe className="w-4 h-4" />
                     </div>
-                    <h3 className="text-lg font-black text-white">CodeCraft MongoDB Cluster Roster</h3>
+                    <h3 className="text-lg font-black text-white">External MongoDB Team Importer</h3>
                     <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold">
                       Strictly Read-Only
                     </span>
                   </div>
-                  <p className="text-xs text-slate-400 font-mono">
-                    cluster0.66pfalv.mongodb.net/codecraft • Fetched directly from remote URI
+                  <p className="text-xs text-slate-400">
+                    Connect to any MongoDB instance, preview teams, and import them one-by-one into the current round.
                   </p>
                 </div>
                 <button
-                  onClick={() => setShowCodecraftPreviewModal(false)}
+                  onClick={() => setShowExternalDbModal(false)}
                   className="p-1.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-white transition-colors text-xs"
                 >
-                  ✕
+                  <X className="w-4 h-4" />
                 </button>
               </div>
 
-              {/* Modal Body: Teams List */}
-              <div className="flex-1 overflow-y-auto py-5 space-y-4 pr-1">
-                {loadingCodecraftLive ? (
-                  <div className="py-16 text-center text-slate-400">
-                    <RefreshCw className="w-7 h-7 animate-spin mx-auto mb-3 text-indigo-400" />
-                    <p className="text-xs font-semibold">Connecting to CodeCraft cluster & fetching teams data...</p>
-                  </div>
-                ) : codecraftLiveTeams.length === 0 ? (
-                  <div className="py-16 text-center border border-dashed border-slate-800 rounded-2xl bg-[#080c14]/40">
-                    <p className="text-sm font-bold text-slate-300">No teams found in CodeCraft cluster</p>
-                  </div>
-                ) : (
-                  codecraftLiveTeams.map((team, idx) => (
-                    <div
-                      key={team.teamName || idx}
-                      className="p-4 rounded-2xl bg-[#080c14] border border-slate-800/90 hover:border-indigo-500/30 transition-all"
-                    >
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-slate-800 text-indigo-300 border border-slate-700">
-                            {team.teamCode}
-                          </span>
-                          <h4 className="text-base font-black text-white">{team.teamName}</h4>
-                          <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-400">
-                            {team.memberCount} {team.memberCount === 1 ? "Member" : "Members"}
-                          </span>
-                        </div>
-                        <span className="text-xs font-semibold text-indigo-300">
-                          {team.projectName}
-                        </span>
-                      </div>
+              {/* Step Navigation Pills */}
+              <div className="flex items-center gap-2 py-3 border-b border-slate-800/60 text-xs font-semibold">
+                <span
+                  className={`px-3 py-1 rounded-lg flex items-center gap-1.5 ${
+                    extDbStep === "connect"
+                      ? "bg-indigo-600 text-white"
+                      : "bg-slate-800 text-slate-400"
+                  }`}
+                >
+                  <span>1. Connect DB</span>
+                </span>
+                <span className="text-slate-600">→</span>
+                <span
+                  className={`px-3 py-1 rounded-lg flex items-center gap-1.5 ${
+                    extDbStep === "preview"
+                      ? "bg-indigo-600 text-white"
+                      : "bg-slate-800 text-slate-400"
+                  }`}
+                >
+                  <span>2. Pick Collection & Preview</span>
+                </span>
+                {extDbPreviewTeams.length > 0 && (
+                  <>
+                    <span className="text-slate-600">→</span>
+                    <span className="px-3 py-1 rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                      {extDbPreviewTeams.length} Teams Ready
+                    </span>
+                  </>
+                )}
+              </div>
 
-                      {/* Members Roster Pills */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3 pt-3 border-t border-slate-800/60">
-                        {team.memberDetails && team.memberDetails.map((member: any, mIdx: number) => (
+              {/* Error Alert */}
+              {extDbError && (
+                <div className="mt-3 p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-start gap-2.5 text-xs text-rose-300">
+                  <AlertCircle className="w-4 h-4 text-rose-400 flex-shrink-0 mt-0.5" />
+                  <span>{extDbError}</span>
+                </div>
+              )}
+
+              {/* Modal Body */}
+              <div className="flex-1 overflow-y-auto py-4 space-y-4 pr-1">
+                {/* STEP 1: Connection Info */}
+                <div className="p-4 rounded-2xl bg-[#080c14] border border-slate-800 space-y-3">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <label className="text-xs font-bold text-slate-300">
+                      MongoDB Connection URI:
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExtDbUri("mongodb+srv://ddev95244:N3n33Yf6b0Z3J41o@cluster0.66pfalv.mongodb.net/codecraft?retryWrites=true&w=majority");
+                        setExtDbName("codecraft");
+                        setExtDbTeamCodePrefix("CC");
+                      }}
+                      className="text-[11px] text-indigo-400 hover:text-indigo-300 underline font-mono"
+                    >
+                      Use CodeCraft Cluster Preset
+                    </button>
+                  </div>
+                  <input
+                    type="text"
+                    value={extDbUri}
+                    onChange={(e) => setExtDbUri(e.target.value)}
+                    placeholder="mongodb+srv://<username>:<password>@cluster.mongodb.net/<database>"
+                    className="w-full bg-slate-900/90 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white font-mono placeholder:text-slate-600 focus:outline-none focus:border-indigo-500"
+                  />
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                    <div>
+                      <label className="text-[11px] text-slate-400 block mb-1">
+                        Database Name (optional):
+                      </label>
+                      <input
+                        type="text"
+                        value={extDbName}
+                        onChange={(e) => setExtDbName(e.target.value)}
+                        placeholder="e.g. codecraft or hackathon"
+                        className="w-full bg-slate-900/90 border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-white placeholder:text-slate-600 focus:outline-none focus:border-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] text-slate-400 block mb-1">
+                        Team Code Prefix:
+                      </label>
+                      <input
+                        type="text"
+                        value={extDbTeamCodePrefix}
+                        onChange={(e) => setExtDbTeamCodePrefix(e.target.value.toUpperCase())}
+                        placeholder="e.g. EXT or CC"
+                        className="w-full bg-slate-900/90 border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-white font-mono placeholder:text-slate-600 focus:outline-none focus:border-indigo-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="pt-2 flex items-center justify-end">
+                    <button
+                      type="button"
+                      onClick={handleExtDbConnect}
+                      disabled={extDbConnecting || !extDbUri.trim()}
+                      className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-2 shadow-md shadow-indigo-950/40 disabled:opacity-50 transition-all"
+                    >
+                      {extDbConnecting ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          <span>Connecting & Reading Collections...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Wifi className="w-3.5 h-3.5" />
+                          <span>{extDbCollections.length > 0 ? "Re-Connect" : "Connect & List Collections"}</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* STEP 2: Collection Selection */}
+                {extDbCollections.length > 0 && (
+                  <div className="p-4 rounded-2xl bg-[#080c14] border border-slate-800 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-slate-300 flex items-center gap-2">
+                        <span>Select Collection to Explore:</span>
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400">
+                          {extDbCollections.length} available
+                        </span>
+                      </label>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <select
+                        value={extDbSelectedCollection}
+                        onChange={(e) => setExtDbSelectedCollection(e.target.value)}
+                        className="flex-1 bg-slate-900/90 border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                      >
+                        <option value="">-- Choose a collection --</option>
+                        {extDbCollections.map((col) => (
+                          <option key={col} value={col}>
+                            {col}
+                          </option>
+                        ))}
+                      </select>
+
+                      <button
+                        type="button"
+                        onClick={handleExtDbPreview}
+                        disabled={extDbPreviewing || !extDbSelectedCollection}
+                        className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs flex items-center gap-2 shadow-md shadow-purple-950/40 disabled:opacity-50 transition-all"
+                      >
+                        {extDbPreviewing ? (
+                          <>
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            <span>Fetching Teams...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>Preview Teams</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* STEP 3: Preview Teams & One-by-One Import */}
+                {extDbPreviewTeams.length > 0 && (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between text-xs text-slate-400 px-1">
+                      <span>
+                        Found <strong className="text-white font-mono">{extDbPreviewTeams.length}</strong> teams in collection{" "}
+                        <code className="text-indigo-300 font-mono">"{extDbSelectedCollection}"</code>:
+                      </span>
+                      <span className="text-emerald-400 font-semibold">
+                        {extDbImportedIds.size} imported
+                      </span>
+                    </div>
+
+                    <div className="space-y-3 max-h-[400px] overflow-y-auto pr-1">
+                      {extDbPreviewTeams.map((team, idx) => {
+                        const isImporting = extDbImportingIds.has(idx);
+                        const isImported = extDbImportedIds.has(idx);
+
+                        return (
                           <div
-                            key={member.email || mIdx}
-                            className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800/60 flex items-start justify-between gap-2 text-xs"
+                            key={idx}
+                            className={`p-4 rounded-2xl bg-[#080c14] border transition-all ${
+                              isImported
+                                ? "border-emerald-500/40 bg-emerald-950/10"
+                                : "border-slate-800/90 hover:border-slate-700"
+                            }`}
                           >
-                            <div>
-                              <p className="font-bold text-slate-200 flex items-center gap-1.5">
-                                <span>{member.name}</span>
-                                {member.isLeader && (
-                                  <span className="text-[9px] font-mono uppercase font-bold px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                                    Leader
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+                              <div>
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-slate-800 text-indigo-300 border border-slate-700">
+                                    {team.teamCode || `${extDbTeamCodePrefix}-${String(idx + 1).padStart(3, "0")}`}
                                   </span>
+                                  <h4 className="text-sm font-black text-white">{team.teamName}</h4>
+                                  <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-400">
+                                    {team.memberCount || (team.members ? team.members.length : 0)} Members
+                                  </span>
+                                </div>
+                                {team.projectName && (
+                                  <p className="text-xs font-semibold text-indigo-300">
+                                    Project: {team.projectName}
+                                  </p>
                                 )}
-                              </p>
-                              {member.email && (
-                                <p className="text-[11px] font-mono text-slate-400">{member.email}</p>
-                              )}
-                              {member.college && (
-                                <p className="text-[10px] text-slate-500 mt-0.5 line-clamp-1">{member.college}</p>
-                              )}
+                              </div>
+
+                              <div>
+                                {isImported ? (
+                                  <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-bold">
+                                    <CheckCircle2 className="w-3.5 h-3.5" />
+                                    <span>Added to Round</span>
+                                  </span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleImportOneTeam(team, idx)}
+                                    disabled={isImporting}
+                                    className="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-indigo-950/40 disabled:opacity-50 transition-all"
+                                  >
+                                    {isImporting ? (
+                                      <>
+                                        <RefreshCw className="w-3 h-3 animate-spin" />
+                                        <span>Adding...</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Plus className="w-3.5 h-3.5" />
+                                        <span>Add to Round</span>
+                                      </>
+                                    )}
+                                  </button>
+                                )}
+                              </div>
                             </div>
-                            {member.branch && (
-                              <span className="text-[10px] font-mono text-slate-400 px-1.5 py-0.5 rounded bg-slate-800">
-                                {member.branch}
-                              </span>
+
+                            {/* Members Roster */}
+                            {team.memberDetails && team.memberDetails.length > 0 && (
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2 pt-2 border-t border-slate-800/60">
+                                {team.memberDetails.map((member: any, mIdx: number) => (
+                                  <div
+                                    key={member.email || mIdx}
+                                    className="p-2 rounded-xl bg-slate-900/60 border border-slate-800/60 flex items-start justify-between gap-2 text-xs"
+                                  >
+                                    <div>
+                                      <p className="font-bold text-slate-200 flex items-center gap-1.5">
+                                        <span>{member.name}</span>
+                                        {member.isLeader && (
+                                          <span className="text-[9px] font-mono uppercase font-bold px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                                            Leader
+                                          </span>
+                                        )}
+                                      </p>
+                                      {member.email && (
+                                        <p className="text-[10px] font-mono text-slate-400">{member.email}</p>
+                                      )}
+                                      {member.college && (
+                                        <p className="text-[10px] text-slate-500 mt-0.5 line-clamp-1">{member.college}</p>
+                                      )}
+                                    </div>
+                                    {member.branch && (
+                                      <span className="text-[9px] font-mono text-slate-400 px-1.5 py-0.5 rounded bg-slate-800">
+                                        {member.branch}
+                                      </span>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
                             )}
                           </div>
-                        ))}
-                      </div>
+                        );
+                      })}
                     </div>
-                  ))
+                  </div>
                 )}
               </div>
 
               {/* Modal Footer */}
-              <div className="pt-4 border-t border-slate-800/80 flex flex-col sm:flex-row items-center justify-between gap-3">
+              <div className="pt-4 border-t border-slate-800/80 flex items-center justify-between gap-3">
                 <p className="text-xs text-slate-400">
-                  Total <strong className="text-white font-mono">{codecraftLiveTeams.length}</strong> teams ready for evaluation.
+                  Imported <strong className="text-emerald-400 font-mono">{extDbImportedIds.size}</strong> teams to this round.
                 </p>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setShowCodecraftPreviewModal(false)}
-                    className="px-4 py-2 rounded-xl text-slate-400 hover:text-white text-xs transition-colors"
-                  >
-                    Close
-                  </button>
-                  <button
-                    onClick={async () => {
-                      await handleSyncFromCodecraft();
-                      setShowCodecraftPreviewModal(false);
-                    }}
-                    disabled={syncingCodecraft}
-                    className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-indigo-950/40"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${syncingCodecraft ? "animate-spin" : ""}`} />
-                    <span>Sync All to Active Round</span>
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowExternalDbModal(false)}
+                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-semibold transition-colors"
+                >
+                  Done
+                </button>
               </div>
             </motion.div>
           </div>
