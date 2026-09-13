@@ -214,7 +214,7 @@ export const JudgeDashboardPage: React.FC = () => {
             </div>
             <div>
               <span className="font-black text-base tracking-tight text-white">
-                Crowd<span className="text-indigo-400">Pulse</span>
+                quz<span className="text-indigo-400">antagonic</span>
               </span>
               <span className="ml-2 text-[10px] font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
                 Judge Portal

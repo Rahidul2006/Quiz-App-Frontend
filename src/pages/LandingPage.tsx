@@ -74,7 +74,7 @@ export const LandingPage: React.FC = () => {
               <Zap className="w-5 h-5 text-slate-950 fill-current" />
             </div>
             <span className="font-black text-xl tracking-tight text-white">
-              Crowd<span className="text-emerald-400">Pulse</span>
+              quz<span className="text-emerald-400">antagonic</span>
             </span>
           </Link>
 
@@ -192,10 +192,10 @@ export const LandingPage: React.FC = () => {
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <Zap className="w-4 h-4 text-emerald-400" />
-            <span className="font-bold text-slate-300">CrowdPulse</span>
+            <span className="font-bold text-slate-300">quzantagonic</span>
             <span>— Real-time event voting & quiz platform.</span>
           </div>
-          <p>© 2026 CrowdPulse. Built for conferences, meetups, and high-energy live events.</p>
+          <p>© 2026 quzantagonic. Built for conferences, meetups, and high-energy live events.</p>
         </div>
       </footer>
     </div>

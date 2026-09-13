@@ -48,7 +48,7 @@ export const JudgeLoginPage: React.FC = () => {
               <Scale className="w-5 h-5 text-white" />
             </div>
             <span className="font-black text-xl tracking-tight text-white">
-              Crowd<span className="text-indigo-400">Pulse</span>
+              quz<span className="text-indigo-400">antagonic</span>
             </span>
           </Link>
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-xs font-semibold uppercase tracking-wider mb-2">

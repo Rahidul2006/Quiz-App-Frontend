@@ -296,7 +296,7 @@ export const PresentationPage: React.FC = () => {
               <Zap className="w-4 h-4 text-[#080c14] fill-current" />
             </div>
             <span className="font-black text-xl tracking-tight text-white">
-              Crowd<span className="text-emerald-400">Pulse</span>
+              quz<span className="text-emerald-400">antagonic</span>
             </span>
           </div>
 
@@ -619,7 +619,7 @@ export const PresentationPage: React.FC = () => {
       <footer className="px-8 py-3 border-t border-slate-800/80 bg-[#0c1017]/90 backdrop-blur-md flex items-center justify-between text-xs text-slate-400 font-medium z-20">
         <span className="flex items-center gap-2">
           <span className={`w-2 h-2 rounded-full ${isWaiting ? "bg-amber-400 animate-pulse" : isEnded ? "bg-rose-400" : isPaused ? "bg-amber-400" : "bg-emerald-500"}`} />
-          <span>CrowdPulse Live Interactive Stage {isWaiting ? "(Waiting Room)" : isEnded ? "(Concluded)" : isPaused ? "(Paused)" : "(Live)"}</span>
+          <span>quzantagonic Live Interactive Stage {isWaiting ? "(Waiting Room)" : isEnded ? "(Concluded)" : isPaused ? "(Paused)" : "(Live)"}</span>
         </span>
         <span className="font-mono text-slate-400">
           Join URL: <span className="text-emerald-400 font-bold">{window.location.origin}/join/{joinCode}</span>

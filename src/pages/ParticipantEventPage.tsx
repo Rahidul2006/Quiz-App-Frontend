@@ -1084,7 +1084,7 @@ export const ParticipantEventPage: React.FC = () => {
 
       {/* Persistent Bottom Bar */}
       <footer className="border-t border-slate-800/60 bg-[#0c1017] px-4 py-2 flex items-center justify-between text-[11px] text-slate-500">
-        <span>CrowdPulse Live</span>
+        <span>quzantagonic Live</span>
         <span>Connected as {participant?.name}</span>
       </footer>
 
