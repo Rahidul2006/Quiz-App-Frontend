@@ -33,6 +33,7 @@ import {
   Download,
   RadioTower,
   X,
+  FolderOpen,
 } from "lucide-react";
 import { api } from "../../services/api";
 import {
@@ -111,6 +112,8 @@ export const JudgingAdminPage: React.FC = () => {
   const [extDbImportedIds, setExtDbImportedIds] = useState<Set<number>>(new Set());
   const [extDbError, setExtDbError] = useState<string | null>(null);
   const [extDbTeamCodePrefix, setExtDbTeamCodePrefix] = useState("EXT");
+  const [extDbConnected, setExtDbConnected] = useState(false);
+  const [extDbResolvedDb, setExtDbResolvedDb] = useState<string>("");
 
   // Copied alert helper
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -379,23 +382,61 @@ export const JudgingAdminPage: React.FC = () => {
     }
   };
 
+  // Helper to extract database name from URI
+  const extractDbNameFromUri = (uri: string): string | null => {
+    try {
+      const match = uri.match(/^mongodb(?:\+srv)?:\/\/[^/]+\/([^?/\s]+)/i);
+      if (match && match[1]) {
+        const db = decodeURIComponent(match[1]).trim();
+        if (db) return db;
+      }
+    } catch {
+      // fallback
+    }
+    return null;
+  };
+
   // External DB Import handlers
   const handleExtDbConnect = async () => {
-    if (!extDbUri.trim()) return;
+    if (!extDbUri.trim()) {
+      setExtDbError("Please enter a MongoDB connection URI.");
+      return;
+    }
+
+    const dbInUri = extractDbNameFromUri(extDbUri.trim());
+    if (!extDbName.trim() && !dbInUri) {
+      setExtDbError("Please enter the database name before connecting.");
+      return;
+    }
+
     setExtDbConnecting(true);
     setExtDbError(null);
     setExtDbCollections([]);
     setExtDbPreviewTeams([]);
     setExtDbSelectedCollection("");
+    setExtDbConnected(false);
+
     try {
       const res = await api.post("/judging/external-db/connect", {
         uri: extDbUri.trim(),
         dbName: extDbName.trim() || undefined,
       });
-      setExtDbCollections(res.collections || []);
+
+      const cols = res.collections || [];
+      const resolved = res.dbName || extDbName.trim() || dbInUri || "";
+      setExtDbResolvedDb(resolved);
+      if (resolved && !extDbName.trim()) {
+        setExtDbName(resolved);
+      }
+      setExtDbCollections(cols);
+      setExtDbConnected(true);
       setExtDbStep("preview");
+      if (cols.length > 0) {
+        setExtDbSelectedCollection(cols[0]);
+      }
     } catch (err: any) {
       setExtDbError(err.message || "Failed to connect to external database.");
+      setExtDbConnected(false);
     } finally {
       setExtDbConnecting(false);
     }
@@ -449,7 +490,10 @@ export const JudgingAdminPage: React.FC = () => {
     setExtDbStep("connect");
     setExtDbCollections([]);
     setExtDbPreviewTeams([]);
+    setExtDbSelectedCollection("");
     setExtDbError(null);
+    setExtDbConnected(false);
+    setExtDbResolvedDb("");
     setExtDbImportingIds(new Set());
     setExtDbImportedIds(new Set());
   };
@@ -1965,8 +2009,8 @@ export const JudgingAdminPage: React.FC = () => {
               {/* Step Navigation Pills */}
               <div className="flex items-center gap-2 py-3 border-b border-slate-800/60 text-xs font-semibold">
                 <span
-                  className={`px-3 py-1 rounded-lg flex items-center gap-1.5 ${
-                    extDbStep === "connect"
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                    !extDbConnected
                       ? "bg-indigo-600 text-white"
                       : "bg-slate-800 text-slate-400"
                   }`}
@@ -1976,7 +2020,7 @@ export const JudgingAdminPage: React.FC = () => {
                 <span className="text-slate-600">→</span>
                 <span
                   className={`px-3 py-1 rounded-lg flex items-center gap-1.5 ${
-                    extDbStep === "preview"
+                    extDbConnected
                       ? "bg-indigo-600 text-white"
                       : "bg-slate-800 text-slate-400"
                   }`}
@@ -2012,7 +2056,7 @@ export const JudgingAdminPage: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => {
-                        setExtDbUri("mongodb+srv://ddev95244:N3n33Yf6b0Z3J41o@cluster0.66pfalv.mongodb.net/codecraft?retryWrites=true&w=majority");
+                        setExtDbUri("mongodb+srv://codecraft:xCJ3Fger2jw6vDsX@cluster0.66pfalv.mongodb.net/?appName=Cluster0");
                         setExtDbName("codecraft");
                         setExtDbTeamCodePrefix("CC");
                       }}
@@ -2031,16 +2075,19 @@ export const JudgingAdminPage: React.FC = () => {
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                     <div>
-                      <label className="text-[11px] text-slate-400 block mb-1">
-                        Database Name (optional):
+                      <label className="text-[11px] text-slate-300 font-semibold block mb-1">
+                        Database Name <span className="text-amber-400 font-normal">(Required if not in URI)</span>:
                       </label>
                       <input
                         type="text"
                         value={extDbName}
                         onChange={(e) => setExtDbName(e.target.value)}
                         placeholder="e.g. codecraft or hackathon"
-                        className="w-full bg-slate-900/90 border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-white placeholder:text-slate-600 focus:outline-none focus:border-indigo-500"
+                        className="w-full bg-slate-900/90 border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-white placeholder:text-slate-600 focus:outline-none focus:border-indigo-500 font-mono"
                       />
+                      <p className="text-[10px] text-slate-500 mt-1">
+                        e.g. <strong className="text-slate-300 font-mono">codecraft</strong>. If your URI ends with <span className="font-mono text-slate-400">.net/?appName=...</span>, enter database name here.
+                      </p>
                     </div>
                     <div>
                       <label className="text-[11px] text-slate-400 block mb-1">
@@ -2071,59 +2118,90 @@ export const JudgingAdminPage: React.FC = () => {
                       ) : (
                         <>
                           <Wifi className="w-3.5 h-3.5" />
-                          <span>{extDbCollections.length > 0 ? "Re-Connect" : "Connect & List Collections"}</span>
+                          <span>{extDbConnected ? "Re-Connect" : "Connect & List Collections"}</span>
                         </>
                       )}
                     </button>
                   </div>
                 </div>
 
-                {/* STEP 2: Collection Selection */}
-                {extDbCollections.length > 0 && (
-                  <div className="p-4 rounded-2xl bg-[#080c14] border border-slate-800 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <label className="text-xs font-bold text-slate-300 flex items-center gap-2">
-                        <span>Select Collection to Explore:</span>
-                        <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400">
-                          {extDbCollections.length} available
+                {/* Connection Success Feedback Banner */}
+                {extDbConnected && (
+                  <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between text-xs text-emerald-300">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                      <span className="font-semibold">
+                        Connected • {extDbCollections.length} collections found
+                      </span>
+                      {extDbResolvedDb && (
+                        <span className="font-mono text-[11px] px-2 py-0.5 rounded bg-emerald-950/60 border border-emerald-500/30 text-emerald-300">
+                          db: {extDbResolvedDb}
                         </span>
-                      </label>
-                    </div>
-
-                    <div className="flex items-center gap-3">
-                      <select
-                        value={extDbSelectedCollection}
-                        onChange={(e) => setExtDbSelectedCollection(e.target.value)}
-                        className="flex-1 bg-slate-900/90 border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
-                      >
-                        <option value="">-- Choose a collection --</option>
-                        {extDbCollections.map((col) => (
-                          <option key={col} value={col}>
-                            {col}
-                          </option>
-                        ))}
-                      </select>
-
-                      <button
-                        type="button"
-                        onClick={handleExtDbPreview}
-                        disabled={extDbPreviewing || !extDbSelectedCollection}
-                        className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs flex items-center gap-2 shadow-md shadow-purple-950/40 disabled:opacity-50 transition-all"
-                      >
-                        {extDbPreviewing ? (
-                          <>
-                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                            <span>Fetching Teams...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Eye className="w-3.5 h-3.5" />
-                            <span>Preview Teams</span>
-                          </>
-                        )}
-                      </button>
+                      )}
                     </div>
                   </div>
+                )}
+
+                {/* STEP 2: Collection Selection or Empty State */}
+                {extDbConnected && (
+                  extDbCollections.length === 0 ? (
+                    <div className="p-6 rounded-2xl bg-[#080c14] border border-slate-800 text-center space-y-2">
+                      <div className="w-10 h-10 rounded-2xl bg-slate-800/80 text-slate-400 flex items-center justify-center mx-auto">
+                        <FolderOpen className="w-5 h-5 text-slate-400" />
+                      </div>
+                      <h4 className="text-sm font-bold text-slate-300">
+                        Connected successfully, but this database contains no collections.
+                      </h4>
+                      <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                        Database <code className="text-indigo-400 font-mono">"{extDbResolvedDb || extDbName}"</code> was found, but does not contain any collections. Please check the database name and try again.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="p-4 rounded-2xl bg-[#080c14] border border-slate-800 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold text-slate-300 flex items-center gap-2">
+                          <span>Select Collection to Explore:</span>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400">
+                            {extDbCollections.length} available
+                          </span>
+                        </label>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <select
+                          value={extDbSelectedCollection}
+                          onChange={(e) => setExtDbSelectedCollection(e.target.value)}
+                          className="flex-1 bg-slate-900/90 border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono"
+                        >
+                          <option value="">-- Choose a collection --</option>
+                          {extDbCollections.map((col) => (
+                            <option key={col} value={col}>
+                              {col}
+                            </option>
+                          ))}
+                        </select>
+
+                        <button
+                          type="button"
+                          onClick={handleExtDbPreview}
+                          disabled={extDbPreviewing || !extDbSelectedCollection}
+                          className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs flex items-center gap-2 shadow-md shadow-purple-950/40 disabled:opacity-50 transition-all"
+                        >
+                          {extDbPreviewing ? (
+                            <>
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                              <span>Fetching Teams...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Eye className="w-3.5 h-3.5" />
+                              <span>Preview Teams</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  )
                 )}
 
                 {/* STEP 3: Preview Teams & One-by-One Import */}
