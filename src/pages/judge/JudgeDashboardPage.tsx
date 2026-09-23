@@ -156,6 +156,8 @@ export const JudgeDashboardPage: React.FC = () => {
     socket.on("judging:criteria_updated", handleCriteriaUpdated);
     socket.on("judging:judge_status_changed", handleJudgeStatusChanged);
     socket.on("connect", handleSocketConnect);
+    // Refresh team list when any evaluation is submitted/drafted by any judge
+    socket.on("judging:evaluation_submitted", () => loadData(false));
 
     return () => {
       socket.off("judging:round_switched", handleRoundSwitch);
@@ -165,6 +167,7 @@ export const JudgeDashboardPage: React.FC = () => {
       socket.off("judging:criteria_updated", handleCriteriaUpdated);
       socket.off("judging:judge_status_changed", handleJudgeStatusChanged);
       socket.off("connect", handleSocketConnect);
+      socket.off("judging:evaluation_submitted");
       leaveJudgingRoom();
       if (bannerTimeoutRef.current) clearTimeout(bannerTimeoutRef.current);
     };

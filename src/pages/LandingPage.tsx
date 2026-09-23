@@ -117,15 +117,6 @@ export const LandingPage: React.FC = () => {
       {/* Hero Section */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-16 pb-20 space-y-20 relative z-10">
         <div className="text-center max-w-3xl mx-auto space-y-6">
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4 }}
-            className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 text-xs font-semibold tracking-wide"
-          >
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span>Real-Time Audience Interaction</span>
-          </motion.div>
 
           <motion.h1
             initial={{ opacity: 0, y: 15 }}

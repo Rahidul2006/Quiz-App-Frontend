@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useMemo } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { useParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -82,9 +82,10 @@ export const ParticipantEventPage: React.FC = () => {
   // Quiz state
   const [selectedQuizOption, setSelectedQuizOption] = useState<string | null>(null);
   const [hasSubmittedQuiz, setHasSubmittedQuiz] = useState(false);
-  const [quizTimer, setQuizTimer] = useState(15);
+  // Server-authoritative question end time (ISO string from server)
+  const [quizQuestionEndsAt, setQuizQuestionEndsAt] = useState<string | null>(null);
+  const [quizSubmitError, setQuizSubmitError] = useState<string | null>(null);
   const [quizLeaderboard, setQuizLeaderboard] = useState<LeaderboardEntry[]>([]);
-  const questionStartTimeRef = useRef<number>(Date.now());
 
   const loadData = async () => {
     if (!eventId) return;
@@ -289,10 +290,14 @@ export const ParticipantEventPage: React.FC = () => {
       socket.on("quiz:question_changed", (data) => {
         setHasSubmittedQuiz(false);
         setSelectedQuizOption(null);
+        setQuizSubmitError(null);
+        // Store server-provided deadline
+        if (data.questionEndsAt) {
+          setQuizQuestionEndsAt(data.questionEndsAt);
+        }
         setActiveActivity((prev) =>
-          prev ? { ...prev, activeQuestionIndex: data.questionIndex } : null
+          prev ? { ...prev, activeQuestionIndex: data.questionIndex, quizQuestionEndsAt: data.questionEndsAt } : null
         );
-        loadData();
       });
 
       socket.on("quiz:leaderboard_updated", (data) => {
@@ -350,29 +355,26 @@ export const ParticipantEventPage: React.FC = () => {
     return `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
   };
 
-  // Quiz Countdown Timer
+  // Sync quizQuestionEndsAt when activity loads (e.g. on page refresh)
   useEffect(() => {
-    if (activeActivity?.type === "quiz" && activeActivity.questions) {
-      const qIndex = activeActivity.activeQuestionIndex || 0;
-      const currentQ = activeActivity.questions[qIndex];
-      if (currentQ) {
-        setQuizTimer(currentQ.time_limit_sec || 15);
-        questionStartTimeRef.current = Date.now();
-
-        const timer = setInterval(() => {
-          setQuizTimer((prev) => {
-            if (prev <= 1) {
-              clearInterval(timer);
-              return 0;
-            }
-            return prev - 1;
-          });
-        }, 1000);
-
-        return () => clearInterval(timer);
-      }
+    if (activeActivity?.type === "quiz" && activeActivity.quizQuestionEndsAt) {
+      setQuizQuestionEndsAt(activeActivity.quizQuestionEndsAt);
     }
-  }, [activeActivity?.id, activeActivity?.activeQuestionIndex]);
+  }, [activeActivity?.id, activeActivity?.activeQuestionIndex, activeActivity?.quizQuestionEndsAt]);
+
+  // Derived server-authoritative quiz timer in seconds
+  const quizTimer = useMemo(() => {
+    if (!quizQuestionEndsAt) {
+      // Fallback: use question time_limit_sec
+      if (activeActivity?.type === "quiz" && activeActivity.questions) {
+        const qIdx = activeActivity.activeQuestionIndex || 0;
+        const q = activeActivity.questions[qIdx];
+        return q?.time_limit_sec || 15;
+      }
+      return 15;
+    }
+    return Math.max(0, Math.ceil((new Date(quizQuestionEndsAt).getTime() - nowTimestamp) / 1000));
+  }, [quizQuestionEndsAt, nowTimestamp, activeActivity]);
 
   // Submit Poll
   const handleVotePoll = async () => {
@@ -423,7 +425,7 @@ export const ParticipantEventPage: React.FC = () => {
     const currentQ = activeActivity.questions[qIndex];
     if (!currentQ) return;
 
-    const timeTaken = Date.now() - questionStartTimeRef.current;
+    setQuizSubmitError(null);
     try {
       const actId = activeActivity.id || activeActivity._id;
       await api.post(`/quizzes/${actId}/answer`, {
@@ -431,11 +433,18 @@ export const ParticipantEventPage: React.FC = () => {
         optionId: selectedQuizOption,
         participantId: participant.id || participant._id,
         participantName: participant.name,
-        timeTakenMs: timeTaken,
+        // timeTakenMs is intentionally omitted — server calculates it authoritatively
       });
       setHasSubmittedQuiz(true);
-    } catch (e) {
-      console.error("Quiz answer submission failed", e);
+    } catch (e: any) {
+      const msg = e?.response?.data?.message || e?.message || "Submission failed";
+      if (e?.response?.status === 409) {
+        // Already answered or time expired — treat as submitted
+        setHasSubmittedQuiz(true);
+      } else {
+        setQuizSubmitError(msg);
+        console.error("Quiz answer submission failed", e);
+      }
     }
   };
 
@@ -1001,7 +1010,7 @@ export const ParticipantEventPage: React.FC = () => {
                         disabled={!selectedQuizOption || quizTimer === 0 || isActPaused}
                         className="w-full py-3.5 rounded-2xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-sm shadow-lg shadow-purple-950/40 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                       >
-                        {isActPaused ? "Quiz is Paused" : "Submit Answer"}
+                        {isActPaused ? "Quiz is Paused" : quizTimer === 0 ? "Time's Up!" : "Submit Answer"}
                       </button>
                     ) : (
                       <div className="p-3 bg-purple-950/40 border border-purple-500/30 rounded-2xl text-center space-y-0.5">
@@ -1012,6 +1021,13 @@ export const ParticipantEventPage: React.FC = () => {
                         <p className="text-[11px] text-slate-400">
                           Waiting for presenter to advance question...
                         </p>
+                      </div>
+                    )}
+
+                    {/* Error display for submission failures */}
+                    {quizSubmitError && !hasSubmittedQuiz && (
+                      <div className="p-2.5 bg-rose-950/40 border border-rose-500/30 rounded-xl text-center">
+                        <p className="text-xs text-rose-300 font-semibold">{quizSubmitError}</p>
                       </div>
                     )}
                   </div>

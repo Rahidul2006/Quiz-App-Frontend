@@ -36,6 +36,7 @@ import {
   FolderOpen,
 } from "lucide-react";
 import { api } from "../../services/api";
+import { getSocket, joinJudgingRoom, leaveJudgingRoom } from "../../services/socket";
 import {
   JudgingRound,
   Judge,
@@ -190,6 +191,51 @@ export const JudgingAdminPage: React.FC = () => {
 
   useEffect(() => {
     loadRoundData();
+  }, [selectedRoundId, activeTab]);
+
+  // Realtime: re-fetch overview or results when any judge submits/saves evaluation
+  useEffect(() => {
+    joinJudgingRoom();
+    const socket = getSocket();
+
+    const handleEvaluationSubmitted = (data: { roundId: string }) => {
+      if (!selectedRoundId) return;
+      // Always refresh overview; also refresh results if on results tab
+      if (activeTab === "overview" && data.roundId === selectedRoundId) {
+        api.get(`/judging/rounds/${selectedRoundId}/overview`)
+          .then((d) => setOverviewData(d))
+          .catch(() => {});
+      }
+      if (activeTab === "results" && data.roundId === selectedRoundId) {
+        api.get(`/judging/rounds/${selectedRoundId}/results`)
+          .then((d) => setResultsData(d))
+          .catch(() => {});
+      }
+    };
+
+    const handleResultsUpdated = (data: { roundId: string }) => {
+      if (!selectedRoundId) return;
+      if (data.roundId === selectedRoundId) {
+        // Silent background refresh of results and overview
+        api.get(`/judging/rounds/${selectedRoundId}/overview`)
+          .then((d) => setOverviewData(d))
+          .catch(() => {});
+        if (activeTab === "results") {
+          api.get(`/judging/rounds/${selectedRoundId}/results`)
+            .then((d) => setResultsData(d))
+            .catch(() => {});
+        }
+      }
+    };
+
+    socket.on("judging:evaluation_submitted", handleEvaluationSubmitted);
+    socket.on("judging:results_updated", handleResultsUpdated);
+
+    return () => {
+      socket.off("judging:evaluation_submitted", handleEvaluationSubmitted);
+      socket.off("judging:results_updated", handleResultsUpdated);
+      leaveJudgingRoom();
+    };
   }, [selectedRoundId, activeTab]);
 
   const currentRound = rounds.find((r) => (r.id || r._id) === selectedRoundId);
@@ -1347,54 +1393,59 @@ export const JudgingAdminPage: React.FC = () => {
             {resultsData && (
               <>
                 {/* Top 3 Podium (if >= 3 teams scored) */}
-                {resultsData.results.filter((r) => r.finalWeightedScore !== null).length >= 3 && (
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
-                    {/* 2nd Place */}
-                    <div className="p-5 rounded-2xl bg-gradient-to-b from-slate-800/60 to-[#0e131f] border border-slate-700/60 text-center order-2 sm:order-1 flex flex-col justify-between">
-                      <div>
-                        <span className="text-3xl mb-1 block">🥈</span>
-                        <span className="text-xs font-mono font-bold uppercase text-slate-400 tracking-wider">2nd Place</span>
-                        <h4 className="text-base font-black text-white mt-1">{resultsData.results[1]?.teamName}</h4>
-                        <p className="text-xs text-indigo-300">{resultsData.results[1]?.projectName}</p>
+                {/* Top 3 Podium — only COMPLETE (fully-scored) teams appear */}
+                {(() => {
+                  const completeResults = resultsData.results.filter((r: any) => r.status === "COMPLETE" || r.finalWeightedScore !== null);
+                  if (completeResults.length < 3) return null;
+                  return (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+                      {/* 2nd Place */}
+                      <div className="p-5 rounded-2xl bg-gradient-to-b from-slate-800/60 to-[#0e131f] border border-slate-700/60 text-center order-2 sm:order-1 flex flex-col justify-between">
+                        <div>
+                          <span className="text-3xl mb-1 block">🥈</span>
+                          <span className="text-xs font-mono font-bold uppercase text-slate-400 tracking-wider">2nd Place</span>
+                          <h4 className="text-base font-black text-white mt-1">{completeResults[1]?.teamName}</h4>
+                          <p className="text-xs text-indigo-300">{completeResults[1]?.projectName}</p>
+                        </div>
+                        <div className="mt-4 pt-3 border-t border-slate-700/40">
+                          <span className="font-mono text-xl font-black text-slate-200">
+                            {completeResults[1]?.finalWeightedScore} pts
+                          </span>
+                        </div>
                       </div>
-                      <div className="mt-4 pt-3 border-t border-slate-700/40">
-                        <span className="font-mono text-xl font-black text-slate-200">
-                          {resultsData.results[1]?.finalWeightedScore} pts
-                        </span>
-                      </div>
-                    </div>
 
-                    {/* 1st Place */}
-                    <div className="p-6 rounded-2xl bg-gradient-to-b from-amber-500/20 via-[#0e131f] to-[#0e131f] border border-amber-500/40 text-center order-1 sm:order-2 shadow-xl shadow-amber-950/20 flex flex-col justify-between">
-                      <div>
-                        <span className="text-4xl mb-1 block">🥇</span>
-                        <span className="text-xs font-mono font-bold uppercase text-amber-400 tracking-wider">Champion</span>
-                        <h4 className="text-lg font-black text-white mt-1">{resultsData.results[0]?.teamName}</h4>
-                        <p className="text-xs text-amber-300 font-semibold">{resultsData.results[0]?.projectName}</p>
+                      {/* 1st Place */}
+                      <div className="p-6 rounded-2xl bg-gradient-to-b from-amber-500/20 via-[#0e131f] to-[#0e131f] border border-amber-500/40 text-center order-1 sm:order-2 shadow-xl shadow-amber-950/20 flex flex-col justify-between">
+                        <div>
+                          <span className="text-4xl mb-1 block">🥇</span>
+                          <span className="text-xs font-mono font-bold uppercase text-amber-400 tracking-wider">Champion</span>
+                          <h4 className="text-lg font-black text-white mt-1">{completeResults[0]?.teamName}</h4>
+                          <p className="text-xs text-amber-300 font-semibold">{completeResults[0]?.projectName}</p>
+                        </div>
+                        <div className="mt-4 pt-3 border-t border-amber-500/20">
+                          <span className="font-mono text-2xl font-black text-amber-300">
+                            {completeResults[0]?.finalWeightedScore} pts
+                          </span>
+                        </div>
                       </div>
-                      <div className="mt-4 pt-3 border-t border-amber-500/20">
-                        <span className="font-mono text-2xl font-black text-amber-300">
-                          {resultsData.results[0]?.finalWeightedScore} pts
-                        </span>
-                      </div>
-                    </div>
 
-                    {/* 3rd Place */}
-                    <div className="p-5 rounded-2xl bg-gradient-to-b from-amber-900/20 to-[#0e131f] border border-amber-800/40 text-center order-3 flex flex-col justify-between">
-                      <div>
-                        <span className="text-3xl mb-1 block">🥉</span>
-                        <span className="text-xs font-mono font-bold uppercase text-amber-600 tracking-wider">3rd Place</span>
-                        <h4 className="text-base font-black text-white mt-1">{resultsData.results[2]?.teamName}</h4>
-                        <p className="text-xs text-indigo-300">{resultsData.results[2]?.projectName}</p>
-                      </div>
-                      <div className="mt-4 pt-3 border-t border-amber-900/30">
-                        <span className="font-mono text-xl font-black text-amber-500">
-                          {resultsData.results[2]?.finalWeightedScore} pts
-                        </span>
+                      {/* 3rd Place */}
+                      <div className="p-5 rounded-2xl bg-gradient-to-b from-amber-900/20 to-[#0e131f] border border-amber-800/40 text-center order-3 flex flex-col justify-between">
+                        <div>
+                          <span className="text-3xl mb-1 block">🥉</span>
+                          <span className="text-xs font-mono font-bold uppercase text-amber-600 tracking-wider">3rd Place</span>
+                          <h4 className="text-base font-black text-white mt-1">{completeResults[2]?.teamName}</h4>
+                          <p className="text-xs text-indigo-300">{completeResults[2]?.projectName}</p>
+                        </div>
+                        <div className="mt-4 pt-3 border-t border-amber-900/30">
+                          <span className="font-mono text-xl font-black text-amber-500">
+                            {completeResults[2]?.finalWeightedScore} pts
+                          </span>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
 
                 {/* Complete Results Table */}
                 <div className="overflow-x-auto rounded-2xl border border-slate-800 bg-[#0e131f]">
@@ -1417,9 +1468,15 @@ export const JudgingAdminPage: React.FC = () => {
                     </thead>
                     <tbody className="divide-y divide-slate-800/60">
                       {resultsData.results.map((r, idx) => (
-                        <tr key={r.id} className="hover:bg-slate-900/40">
+                        <tr key={r.id} className={`hover:bg-slate-900/40 ${
+                            (r as any).status === "PENDING" ? "opacity-70" : ""
+                          }`}>
                           <td className="p-4 text-center font-mono font-black text-sm">
-                            {r.rank === 1 ? "🥇" : r.rank === 2 ? "🥈" : r.rank === 3 ? "🥉" : `#${r.rank}`}
+                            {(r as any).status === "PENDING" ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-[10px] font-bold">
+                                Pending {(r as any).evaluationsCount}/{(r as any).expectedJudgesCount || "?"}
+                              </span>
+                            ) : r.rank === 1 ? "🥇" : r.rank === 2 ? "🥈" : r.rank === 3 ? "🥉" : `#${r.rank}`}
                           </td>
                           <td className="p-4">
                             <span className="font-mono text-[10px] font-bold text-indigo-400 block">{r.teamCode}</span>
@@ -1444,7 +1501,9 @@ export const JudgingAdminPage: React.FC = () => {
                                 {r.finalWeightedScore}
                               </span>
                             ) : (
-                              <span className="text-slate-600 font-mono">Unrated</span>
+                              <span className="text-amber-500/70 font-mono text-xs">
+                                Pending — {(r as any).evaluationsCount || 0}/{(r as any).expectedJudgesCount || "?"} judges
+                              </span>
                             )}
                           </td>
                           <td className="p-4 text-center">

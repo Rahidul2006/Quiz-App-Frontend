@@ -129,6 +129,8 @@ export interface LeaderboardEntry {
   total_questions: number;
   total_time_ms: number;
   rank: number;
+  answered_questions?: number;
+  completion_percentage?: number;
 }
 
 export interface Activity {
@@ -160,6 +162,9 @@ export interface Activity {
   options?: PollOption[];
   questions?: QuizQuestion[];
   total_responses?: number;
+  // Server-authoritative question timing (quiz only)
+  quizQuestionStartedAt?: string | null;
+  quizQuestionEndsAt?: string | null;
 }
 
 export interface User {
