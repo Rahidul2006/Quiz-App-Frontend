@@ -85,6 +85,16 @@ export interface ActivitySettings {
   allow_user_options?: boolean;
   timer_seconds?: number;
   quiz_state?: 'answering' | 'revealed' | 'leaderboard';
+  // Quiz slot-based participation
+  quiz_slots?: string[];
+  require_slot_selection?: boolean;
+}
+
+export interface QuizSlotInfo {
+  slotLabel: string;
+  isClaimed: boolean;
+  participantId: string | null;
+  participantName: string | null;
 }
 
 export interface PollOption {
@@ -128,6 +138,8 @@ export interface LeaderboardEntry {
   correct_answers: number;
   total_questions: number;
   total_time_ms: number;
+  average_time_ms?: number;
+  average_time_sec?: number;
   rank: number;
   answered_questions?: number;
   completion_percentage?: number;

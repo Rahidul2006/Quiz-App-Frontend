@@ -39,6 +39,19 @@ export const PresentationPage: React.FC = () => {
 
   // Quiz state
   const [quizLeaderboard, setQuizLeaderboard] = useState<any[]>([]);
+  const [quizRevealedData, setQuizRevealedData] = useState<{
+    isRevealed: boolean;
+    correctOptionId: string | null;
+    explanation: string;
+    optionCounts: Record<string, number>;
+    totalResponses: number;
+  }>({
+    isRevealed: false,
+    correctOptionId: null,
+    explanation: "",
+    optionCounts: {},
+    totalResponses: 0,
+  });
 
   const loadData = async () => {
     if (!eventId) return;
@@ -200,7 +213,30 @@ export const PresentationPage: React.FC = () => {
       });
 
       socket.on("quiz:question_changed", () => {
+        setQuizRevealedData({
+          isRevealed: false,
+          correctOptionId: null,
+          explanation: "",
+          optionCounts: {},
+          totalResponses: 0,
+        });
         loadData();
+      });
+
+      socket.on("quiz:answer_revealed", (data: any) => {
+        setQuizRevealedData({
+          isRevealed: true,
+          correctOptionId: data.correctOptionId || null,
+          explanation: data.explanation || "",
+          optionCounts: data.optionCounts || {},
+          totalResponses: data.totalResponses || 0,
+        });
+        if (data.leaderboard) {
+          setQuizLeaderboard(data.leaderboard);
+        }
+        setActiveActivity((prev) =>
+          prev ? { ...prev, settings: { ...prev.settings, quiz_state: "revealed" } } : null
+        );
       });
 
       socket.on("quiz:leaderboard_updated", (data) => {
@@ -230,6 +266,7 @@ export const PresentationPage: React.FC = () => {
         socket.off("poll:results_updated");
         socket.off("wordcloud:updated");
         socket.off("quiz:question_changed");
+        socket.off("quiz:answer_revealed");
         socket.off("quiz:leaderboard_updated");
         socket.off("quiz:finished");
       };
@@ -581,6 +618,10 @@ export const PresentationPage: React.FC = () => {
                       totalQuestions={activeActivity.questions.length}
                       leaderboard={quizLeaderboard}
                       isPresentation={true}
+                      quizState={activeActivity.settings?.quiz_state}
+                      correctOptionId={quizRevealedData.correctOptionId}
+                      optionCounts={quizRevealedData.optionCounts}
+                      totalResponses={quizRevealedData.totalResponses}
                     />
                   )
                 )}

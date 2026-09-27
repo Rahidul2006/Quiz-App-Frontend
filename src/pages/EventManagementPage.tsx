@@ -26,7 +26,7 @@ import {
 } from "lucide-react";
 import { api } from "../services/api";
 import { getSocket, joinEventRoom, leaveEventRoom } from "../services/socket";
-import { Activity, EventItem, Participant, PollOption, QuizQuestion, LeaderboardEntry } from "../types";
+import { Activity, EventItem, Participant, PollOption, QuizQuestion, LeaderboardEntry, QuizSlotInfo } from "../types";
 import { QrModal } from "../components/qr/QrModal";
 import { PollVisualizer } from "../components/activities/PollVisualizer";
 import { WordCloudVisualizer } from "../components/activities/WordCloudVisualizer";
@@ -79,16 +79,19 @@ export const EventManagementPage: React.FC = () => {
   const [pollType, setPollType] = useState<"single" | "multiple">("single");
 
   // Quiz creation inputs
+  const [activeQuizQuestionTab, setActiveQuizQuestionTab] = useState<number>(0);
   const [quizQuestions, setQuizQuestions] = useState<
     Array<{
       question_text: string;
       time_limit_sec: number;
+      explanation?: string;
       options: Array<{ text: string; is_correct: boolean }>;
     }>
   >([
     {
       question_text: "",
       time_limit_sec: 15,
+      explanation: "",
       options: [
         { text: "", is_correct: true },
         { text: "", is_correct: false },
@@ -98,10 +101,29 @@ export const EventManagementPage: React.FC = () => {
     },
   ]);
 
+  // Quiz slot state — admin-defined join slots
+  const [quizSlotsEnabled, setQuizSlotsEnabled] = useState(false);
+  const [quizSlotInputs, setQuizSlotInputs] = useState<string[]>(["Slot 1", "Slot 2", "Slot 3"]);
+
   // Live Results State
   const [pollResults, setPollResults] = useState<{ options: PollOption[]; total: number }>({ options: [], total: 0 });
   const [wordCloudWords, setWordCloudWords] = useState<any[]>([]);
   const [quizLeaderboard, setQuizLeaderboard] = useState<any[]>([]);
+  const [quizRevealedState, setQuizRevealedState] = useState<{
+    isRevealed: boolean;
+    correctOptionId: string | null;
+    explanation: string;
+    optionCounts: Record<string, number>;
+    totalResponses: number;
+  }>({
+    isRevealed: false,
+    correctOptionId: null,
+    explanation: "",
+    optionCounts: {},
+    totalResponses: 0,
+  });
+  // Quiz slot state for admin view
+  const [liveQuizSlots, setLiveQuizSlots] = useState<QuizSlotInfo[]>([]);
 
   // Results Tab Inspector State
   const [selectedResultActivityId, setSelectedResultActivityId] = useState<string | null>(null);
@@ -150,6 +172,19 @@ export const EventManagementPage: React.FC = () => {
           } else if (act.type === "quiz") {
             const lb = await api.get(`/quizzes/${activeActId}/leaderboard`);
             setQuizLeaderboard(lb);
+            // Load slot data if configured
+            if (act.settings?.require_slot_selection) {
+              try {
+                const slotData = await api.get(`/quizzes/${activeActId}/quiz-slots`);
+                if (slotData.slotsEnabled) {
+                  setLiveQuizSlots(slotData.slots || []);
+                }
+              } catch (_) {
+                // ignore slot load errors
+              }
+            } else {
+              setLiveQuizSlots([]);
+            }
           }
         }
       }
@@ -321,8 +356,46 @@ export const EventManagementPage: React.FC = () => {
         setQuizLeaderboard(data.leaderboard);
       });
 
+      socket.on("quiz:answer_revealed", (data) => {
+        setQuizRevealedState({
+          isRevealed: true,
+          correctOptionId: data.correctOptionId || null,
+          explanation: data.explanation || "",
+          optionCounts: data.optionCounts || {},
+          totalResponses: data.totalResponses || 0,
+        });
+        if (data.leaderboard) {
+          setQuizLeaderboard(data.leaderboard);
+        }
+      });
+
+      socket.on("quiz:question_changed", () => {
+        setQuizRevealedState({
+          isRevealed: false,
+          correctOptionId: null,
+          explanation: "",
+          optionCounts: {},
+          totalResponses: 0,
+        });
+        loadEventData();
+      });
+
+      socket.on("quiz:answer_submitted", () => {
+        setQuizRevealedState((prev) => ({
+          ...prev,
+          totalResponses: prev.totalResponses + 1,
+        }));
+      });
+
       socket.on("quiz:finished", (data) => {
         setQuizLeaderboard(data.leaderboard);
+        loadEventData();
+      });
+
+      socket.on("quiz:slots_updated", (data) => {
+        if (data?.slots) {
+          setLiveQuizSlots(data.slots);
+        }
       });
 
       return () => {
@@ -341,7 +414,11 @@ export const EventManagementPage: React.FC = () => {
         socket.off("poll:results_updated");
         socket.off("wordcloud:updated");
         socket.off("quiz:leaderboard_updated");
+        socket.off("quiz:answer_revealed");
+        socket.off("quiz:question_changed");
+        socket.off("quiz:answer_submitted");
         socket.off("quiz:finished");
+        socket.off("quiz:slots_updated");
       };
     }
   }, [eventId]);
@@ -527,10 +604,30 @@ export const EventManagementPage: React.FC = () => {
         settings: { show_live_results: true },
       });
     } else if (activityType === "quiz") {
+      // Validate all questions
+      for (let i = 0; i < quizQuestions.length; i++) {
+        const q = quizQuestions[i];
+        if (!q.question_text.trim()) {
+          alert(`Question ${i + 1} needs a question title/prompt.`);
+          return;
+        }
+        for (let j = 0; j < q.options.length; j++) {
+          if (!q.options[j].text.trim()) {
+            alert(`Question ${i + 1}, Choice ${String.fromCharCode(65 + j)} cannot be empty.`);
+            return;
+          }
+        }
+        if (!q.options.some((o) => o.is_correct)) {
+          alert(`Question ${i + 1} must have one option selected as the correct answer.`);
+          return;
+        }
+      }
+
       const questions = quizQuestions.map((q, qIdx) => ({
         question_text: q.question_text.trim(),
         time_limit_sec: q.time_limit_sec || 15,
         points: 1000,
+        explanation: q.explanation?.trim() || "",
         order_index: qIdx,
         options: q.options.map((opt, oIdx) => ({
           option_text: opt.text.trim(),
@@ -539,11 +636,19 @@ export const EventManagementPage: React.FC = () => {
         })),
       }));
 
+      const filteredSlots = quizSlotsEnabled
+        ? quizSlotInputs.map((s) => s.trim()).filter((s) => s.length > 0)
+        : [];
+
       await api.post(`/events/${eventId}/activities`, {
         type: "quiz",
         title: activityTitle.trim(),
         duration: chosenDuration,
-        settings: { quiz_state: "answering" },
+        settings: {
+          quiz_state: "answering",
+          quiz_slots: filteredSlots,
+          require_slot_selection: filteredSlots.length > 0,
+        },
         questions,
       });
     }
@@ -554,6 +659,22 @@ export const EventManagementPage: React.FC = () => {
     setActivityDuration(30);
     setIsCustomDuration(false);
     setCustomDurationVal("30");
+    setQuizSlotsEnabled(false);
+    setQuizSlotInputs(["Slot 1", "Slot 2", "Slot 3"]);
+    setActiveQuizQuestionTab(0);
+    setQuizQuestions([
+      {
+        question_text: "",
+        time_limit_sec: 15,
+        explanation: "",
+        options: [
+          { text: "", is_correct: true },
+          { text: "", is_correct: false },
+          { text: "", is_correct: false },
+          { text: "", is_correct: false },
+        ],
+      },
+    ]);
     loadEventData();
   };
 
@@ -1106,7 +1227,18 @@ export const EventManagementPage: React.FC = () => {
                         />
                       </div>
                     )}
+
+                    {/* Quiz Slot Indicator */}
+                    {activity.type === "quiz" && activity.settings?.require_slot_selection && (
+                      <div className="mt-3 flex items-center gap-2">
+                        <span className="text-[10px] font-mono font-bold text-purple-400 bg-purple-500/10 border border-purple-500/30 px-2.5 py-1 rounded-full flex items-center gap-1.5">
+                          <span>🎟️</span>
+                          <span>{activity.settings.quiz_slots?.length || 0} Participant Slots Defined</span>
+                        </span>
+                      </div>
+                    )}
                   </motion.div>
+
                 );
               })}
 
@@ -1126,6 +1258,48 @@ export const EventManagementPage: React.FC = () => {
                     <Plus className="w-4 h-4" />
                     <span>Create Your First Activity</span>
                   </button>
+                </div>
+              )}
+
+              {/* Live Slot Occupancy Panel */}
+              {activeActivity?.type === "quiz" && activeActivity?.settings?.require_slot_selection && liveQuizSlots.length > 0 && (
+                <div className="bg-[#0f1520] border border-purple-500/30 rounded-3xl p-5 shadow-xl">
+                  <div className="flex items-center gap-2.5 mb-4 pb-3.5 border-b border-slate-800/80">
+                    <span className="text-lg">🎟️</span>
+                    <div>
+                      <h4 className="text-sm font-bold text-purple-300">Slot Occupancy — Live</h4>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        {liveQuizSlots.filter(s => s.isClaimed).length} / {liveQuizSlots.length} slots claimed
+                      </p>
+                    </div>
+                    <span className="ml-auto text-[10px] font-mono font-bold text-purple-400 bg-purple-500/10 border border-purple-500/30 px-2.5 py-1 rounded-full flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-ping" />
+                      LIVE
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
+                    {liveQuizSlots.map((slot) => (
+                      <div
+                        key={slot.slotLabel}
+                        className={`flex items-start gap-2 p-2.5 rounded-xl border text-xs transition-all ${
+                          slot.isClaimed
+                            ? "border-emerald-500/30 bg-emerald-500/5"
+                            : "border-slate-800/80 bg-[#090d14]"
+                        }`}
+                      >
+                        <span className={`w-2 h-2 rounded-full mt-0.5 flex-shrink-0 ${slot.isClaimed ? "bg-emerald-400" : "bg-slate-600"}`} />
+                        <div className="min-w-0">
+                          <div className="font-bold text-slate-200 truncate">{slot.slotLabel}</div>
+                          {slot.isClaimed ? (
+                            <div className="text-[10px] text-emerald-400 font-mono truncate">✓ {slot.participantName}</div>
+                          ) : (
+                            <div className="text-[10px] text-slate-500 font-mono">Available</div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
@@ -1366,10 +1540,40 @@ export const EventManagementPage: React.FC = () => {
                           totalQuestions={currentAct.questions.length}
                           leaderboard={quizLeaderboard}
                           isAdmin={true}
+                          quizState={currentAct.settings?.quiz_state}
+                          correctOptionId={quizRevealedState.correctOptionId}
+                          optionCounts={quizRevealedState.optionCounts}
+                          totalResponses={quizRevealedState.totalResponses}
+                          onReveal={async () => {
+                            try {
+                              const actId = currentAct.id || (currentAct as any)._id;
+                              const res = await api.post(`/quizzes/${actId}/reveal`, {});
+                              if (res?.leaderboard) {
+                                setQuizLeaderboard(res.leaderboard);
+                              }
+                              setQuizRevealedState({
+                                isRevealed: true,
+                                correctOptionId: res.correctOptionId,
+                                explanation: res.explanation || "",
+                                optionCounts: res.optionCounts || {},
+                                totalResponses: res.totalResponses || 0,
+                              });
+                              loadEventData();
+                            } catch (err: any) {
+                              console.error("Reveal answer error:", err);
+                            }
+                          }}
                           onAdvance={async () => {
                             const nextIdx = (currentAct.activeQuestionIndex || 0) + 1;
                             await api.post(`/quizzes/${currentAct.id || (currentAct as any)._id}/advance`, {
                               questionIndex: nextIdx,
+                            });
+                            setQuizRevealedState({
+                              isRevealed: false,
+                              correctOptionId: null,
+                              explanation: "",
+                              optionCounts: {},
+                              totalResponses: 0,
                             });
                             loadEventData();
                           }}
@@ -1689,57 +1893,254 @@ export const EventManagementPage: React.FC = () => {
 
                 {activityType === "quiz" && (
                   <div className="space-y-4 pt-2">
-                    <label className="block text-xs font-semibold text-slate-300">
-                      Question 1
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={quizQuestions[0].question_text}
-                      onChange={(e) => {
-                        const copy = [...quizQuestions];
-                        copy[0].question_text = e.target.value;
-                        setQuizQuestions(copy);
-                      }}
-                      placeholder="e.g. Which company created React?"
-                      className="w-full bg-[#090d14] border border-slate-700/80 rounded-xl px-4 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 transition-colors"
-                    />
+                    {/* Question Tabs Bar */}
+                    <div className="flex items-center justify-between gap-2 border-b border-slate-800/80 pb-3">
+                      <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none py-1">
+                        {quizQuestions.map((_, qIdx) => (
+                          <button
+                            key={qIdx}
+                            type="button"
+                            onClick={() => setActiveQuizQuestionTab(qIdx)}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-bold font-mono transition-all flex items-center gap-1.5 flex-shrink-0 ${
+                              activeQuizQuestionTab === qIdx
+                                ? "bg-purple-600 text-white shadow-md shadow-purple-950/40 ring-1 ring-purple-400/50"
+                                : "bg-[#090d14] text-slate-400 hover:text-slate-200 border border-slate-800"
+                            }`}
+                          >
+                            <span>Q{qIdx + 1}</span>
+                          </button>
+                        ))}
+                      </div>
 
-                    <div className="grid grid-cols-2 gap-2.5">
-                      {quizQuestions[0].options.map((opt, idx) => (
-                        <div
-                          key={idx}
-                          className={`flex items-center gap-2 p-2.5 rounded-xl border transition-all ${
-                            opt.is_correct
-                              ? "border-emerald-500/60 bg-emerald-950/20"
-                              : "border-slate-800 bg-[#090d14]"
-                          }`}
-                        >
-                          <input
-                            type="radio"
-                            name="correct_option"
-                            checked={opt.is_correct}
-                            onChange={() => {
-                              const copy = [...quizQuestions];
-                              copy[0].options.forEach((o, i) => (o.is_correct = i === idx));
-                              setQuizQuestions(copy);
-                            }}
-                            className="text-emerald-500 focus:ring-emerald-500 cursor-pointer"
-                          />
-                          <input
-                            type="text"
-                            required
-                            value={opt.text}
-                            onChange={(e) => {
-                              const copy = [...quizQuestions];
-                              copy[0].options[idx].text = e.target.value;
-                              setQuizQuestions(copy);
-                            }}
-                            placeholder={`Choice ${String.fromCharCode(65 + idx)}`}
-                            className="bg-transparent text-xs text-white focus:outline-none w-full"
-                          />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const newQuestions = [
+                            ...quizQuestions,
+                            {
+                              question_text: "",
+                              time_limit_sec: 15,
+                              explanation: "",
+                              options: [
+                                { text: "", is_correct: true },
+                                { text: "", is_correct: false },
+                                { text: "", is_correct: false },
+                                { text: "", is_correct: false },
+                              ],
+                            },
+                          ];
+                          setQuizQuestions(newQuestions);
+                          setActiveQuizQuestionTab(newQuestions.length - 1);
+                        }}
+                        className="px-3 py-1.5 rounded-xl text-xs font-bold bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/30 transition-all flex items-center gap-1 flex-shrink-0 shadow-sm"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Add Question</span>
+                      </button>
+                    </div>
+
+                    {/* Active Question Editor */}
+                    {(() => {
+                      const curIdx = Math.min(activeQuizQuestionTab, quizQuestions.length - 1);
+                      const curQ = quizQuestions[curIdx];
+                      if (!curQ) return null;
+
+                      return (
+                        <div className="space-y-3.5 bg-[#090d14]/70 p-4 rounded-2xl border border-slate-800">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-purple-300 font-mono flex items-center gap-1.5">
+                              <span>Question {curIdx + 1} of {quizQuestions.length}</span>
+                            </span>
+
+                            <div className="flex items-center gap-2">
+                              {/* Time limit select */}
+                              <div className="flex items-center gap-1.5 text-xs text-slate-400">
+                                <Clock className="w-3.5 h-3.5 text-cyan-400" />
+                                <select
+                                  value={curQ.time_limit_sec || 15}
+                                  onChange={(e) => {
+                                    const copy = [...quizQuestions];
+                                    copy[curIdx].time_limit_sec = Number(e.target.value);
+                                    setQuizQuestions(copy);
+                                  }}
+                                  className="bg-[#121722] border border-slate-700/80 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-purple-500 font-mono"
+                                >
+                                  <option value={10}>10s</option>
+                                  <option value={15}>15s</option>
+                                  <option value={20}>20s</option>
+                                  <option value={30}>30s</option>
+                                  <option value={45}>45s</option>
+                                  <option value={60}>60s</option>
+                                </select>
+                              </div>
+
+                              {/* Delete Question (if > 1) */}
+                              {quizQuestions.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const copy = quizQuestions.filter((_, idx) => idx !== curIdx);
+                                    setQuizQuestions(copy);
+                                    setActiveQuizQuestionTab(Math.max(0, curIdx - 1));
+                                  }}
+                                  className="p-1 rounded-lg text-rose-400 hover:bg-rose-500/10 transition-colors"
+                                  title="Delete this question"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Question text */}
+                          <div>
+                            <input
+                              type="text"
+                              required
+                              value={curQ.question_text}
+                              onChange={(e) => {
+                                const copy = [...quizQuestions];
+                                copy[curIdx].question_text = e.target.value;
+                                setQuizQuestions(copy);
+                              }}
+                              placeholder={`e.g. Question ${curIdx + 1}: What is the capital of France?`}
+                              className="w-full bg-[#121722] border border-slate-700/80 rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 transition-colors"
+                            />
+                          </div>
+
+                          {/* Options grid */}
+                          <div>
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-[11px] font-semibold text-slate-400">
+                                Choices (Select radio button for the correct answer):
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                              {curQ.options.map((opt, idx) => (
+                                <div
+                                  key={idx}
+                                  className={`flex items-center gap-2 p-2.5 rounded-xl border transition-all ${
+                                    opt.is_correct
+                                      ? "border-emerald-500/60 bg-emerald-950/30 ring-1 ring-emerald-500/40"
+                                      : "border-slate-800 bg-[#121722]"
+                                  }`}
+                                >
+                                  <input
+                                    type="radio"
+                                    name={`correct_option_${curIdx}`}
+                                    checked={opt.is_correct}
+                                    onChange={() => {
+                                      const copy = [...quizQuestions];
+                                      copy[curIdx].options.forEach((o, i) => (o.is_correct = i === idx));
+                                      setQuizQuestions(copy);
+                                    }}
+                                    className="text-emerald-500 focus:ring-emerald-500 cursor-pointer h-4 w-4"
+                                  />
+                                  <span className="text-xs font-mono font-bold text-slate-400 flex-shrink-0">
+                                    {String.fromCharCode(65 + idx)}:
+                                  </span>
+                                  <input
+                                    type="text"
+                                    required
+                                    value={opt.text}
+                                    onChange={(e) => {
+                                      const copy = [...quizQuestions];
+                                      copy[curIdx].options[idx].text = e.target.value;
+                                      setQuizQuestions(copy);
+                                    }}
+                                    placeholder={`Choice ${String.fromCharCode(65 + idx)}`}
+                                    className="bg-transparent text-xs text-white focus:outline-none w-full"
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Optional Explanation */}
+                          <div>
+                            <input
+                              type="text"
+                              value={curQ.explanation || ""}
+                              onChange={(e) => {
+                                const copy = [...quizQuestions];
+                                copy[curIdx].explanation = e.target.value;
+                                setQuizQuestions(copy);
+                              }}
+                              placeholder="Optional explanation shown when answer is revealed (e.g. Paris is the capital)"
+                              className="w-full bg-[#121722] border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-300 placeholder-slate-500 focus:outline-none focus:border-purple-500 transition-colors"
+                            />
+                          </div>
                         </div>
-                      ))}
+                      );
+                    })()}
+
+                    {/* ── Quiz Slot Selector ── */}
+                    <div className="border border-slate-700/60 rounded-2xl overflow-hidden">
+                      <button
+                        type="button"
+                        onClick={() => setQuizSlotsEnabled(!quizSlotsEnabled)}
+                        className={`w-full flex items-center justify-between px-4 py-3 text-xs font-bold transition-all ${
+                          quizSlotsEnabled
+                            ? "bg-purple-500/10 text-purple-300"
+                            : "bg-[#090d14] text-slate-400 hover:text-slate-200"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="text-base">🎟️</span>
+                          <span>Participant Slot Selection</span>
+                          {quizSlotsEnabled && (
+                            <span className="px-2 py-0.5 rounded-full bg-purple-500/20 border border-purple-500/40 text-purple-300 text-[10px] font-bold">
+                              ENABLED
+                            </span>
+                          )}
+                        </div>
+                        <span className={`text-base transition-transform ${quizSlotsEnabled ? "rotate-90" : ""}`}>›</span>
+                      </button>
+
+                      {quizSlotsEnabled && (
+                        <div className="px-4 pb-4 pt-3 bg-[#0d1220] space-y-3">
+                          <p className="text-[11px] text-slate-400 leading-relaxed">
+                            Define dropdown options that participants must select when joining. Each option can only be claimed by <strong className="text-slate-300">one person</strong>.
+                          </p>
+                          <div className="space-y-2">
+                            {quizSlotInputs.map((slot, idx) => (
+                              <div key={idx} className="flex items-center gap-2">
+                                <span className="w-6 h-6 rounded-lg bg-purple-500/10 border border-purple-500/30 text-purple-400 text-[10px] font-bold flex items-center justify-center flex-shrink-0">
+                                  {idx + 1}
+                                </span>
+                                <input
+                                  type="text"
+                                  value={slot}
+                                  onChange={(e) => {
+                                    const copy = [...quizSlotInputs];
+                                    copy[idx] = e.target.value;
+                                    setQuizSlotInputs(copy);
+                                  }}
+                                  placeholder={`Slot ${idx + 1} name`}
+                                  className="flex-1 bg-[#090d14] border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 transition-colors"
+                                />
+                                {quizSlotInputs.length > 1 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setQuizSlotInputs(quizSlotInputs.filter((_, i) => i !== idx))}
+                                    className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded-lg transition-colors"
+                                  >
+                                    <X className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setQuizSlotInputs([...quizSlotInputs, `Slot ${quizSlotInputs.length + 1}`])}
+                            className="text-[11px] font-semibold text-purple-400 hover:text-purple-300 transition-colors flex items-center gap-1.5"
+                          >
+                            <Plus className="w-3 h-3" />
+                            <span>Add another slot</span>
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
