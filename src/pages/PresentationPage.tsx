@@ -250,6 +250,31 @@ export const PresentationPage: React.FC = () => {
         );
       });
 
+      socket.on("quiz:timer_started", () => {
+        loadData();
+      });
+
+      socket.on("quiz:timer_paused", () => {
+        loadData();
+      });
+
+      socket.on("quiz:timer_resumed", () => {
+        loadData();
+      });
+
+      socket.on("quiz:timer_reset", () => {
+        loadData();
+      });
+
+      socket.on("quiz:timer_updated", () => {
+        loadData();
+      });
+
+      socket.on("quiz:leaderboard_shown", (data: any) => {
+        if (data?.leaderboard) setQuizLeaderboard(data.leaderboard);
+        loadData();
+      });
+
       return () => {
         leaveEventRoom(eventId);
         socket.off("event:started");
@@ -266,6 +291,12 @@ export const PresentationPage: React.FC = () => {
         socket.off("poll:results_updated");
         socket.off("wordcloud:updated");
         socket.off("quiz:question_changed");
+        socket.off("quiz:timer_started");
+        socket.off("quiz:timer_paused");
+        socket.off("quiz:timer_resumed");
+        socket.off("quiz:timer_reset");
+        socket.off("quiz:timer_updated");
+        socket.off("quiz:leaderboard_shown");
         socket.off("quiz:answer_revealed");
         socket.off("quiz:leaderboard_updated");
         socket.off("quiz:finished");
@@ -566,7 +597,7 @@ export const PresentationPage: React.FC = () => {
                     </h3>
                   </div>
 
-                  {actRemaining !== null && (
+                  {actRemaining !== null && activeActivity.type !== "quiz" && (
                     <div className={`flex items-center gap-3 px-5 sm:px-6 py-2.5 sm:py-3 rounded-2xl font-mono border transition-all ${
                       isActPaused
                         ? "bg-amber-500/10 border-amber-500/40 text-amber-300 shadow-lg shadow-amber-950/20"
@@ -616,12 +647,16 @@ export const PresentationPage: React.FC = () => {
                       question={activeActivity.questions[activeActivity.activeQuestionIndex || 0]}
                       questionIndex={activeActivity.activeQuestionIndex || 0}
                       totalQuestions={activeActivity.questions.length}
+                      questions={activeActivity.questions}
                       leaderboard={quizLeaderboard}
                       isPresentation={true}
                       quizState={activeActivity.settings?.quiz_state}
                       correctOptionId={quizRevealedData.correctOptionId}
                       optionCounts={quizRevealedData.optionCounts}
                       totalResponses={quizRevealedData.totalResponses}
+                      questionStartedAt={activeActivity.quizQuestionStartedAt}
+                      questionEndsAt={activeActivity.quizQuestionEndsAt}
+                      remainingSeconds={activeActivity.settings?.quizQuestionRemainingSeconds}
                     />
                   )
                 )}

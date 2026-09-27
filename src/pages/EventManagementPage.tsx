@@ -3,6 +3,7 @@ import { Link, useParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft,
+  ArrowRight,
   Tv,
   QrCode,
   Users,
@@ -23,6 +24,9 @@ import {
   HelpCircle,
   Hash,
   X,
+  RotateCcw,
+  ListOrdered,
+  Eye,
 } from "lucide-react";
 import { api } from "../services/api";
 import { getSocket, joinEventRoom, leaveEventRoom } from "../services/socket";
@@ -387,6 +391,31 @@ export const EventManagementPage: React.FC = () => {
         }));
       });
 
+      socket.on("quiz:timer_started", () => {
+        loadEventData();
+      });
+
+      socket.on("quiz:timer_paused", () => {
+        loadEventData();
+      });
+
+      socket.on("quiz:timer_resumed", () => {
+        loadEventData();
+      });
+
+      socket.on("quiz:timer_reset", () => {
+        loadEventData();
+      });
+
+      socket.on("quiz:timer_updated", () => {
+        loadEventData();
+      });
+
+      socket.on("quiz:leaderboard_shown", (data) => {
+        if (data?.leaderboard) setQuizLeaderboard(data.leaderboard);
+        loadEventData();
+      });
+
       socket.on("quiz:finished", (data) => {
         setQuizLeaderboard(data.leaderboard);
         loadEventData();
@@ -417,6 +446,12 @@ export const EventManagementPage: React.FC = () => {
         socket.off("quiz:answer_revealed");
         socket.off("quiz:question_changed");
         socket.off("quiz:answer_submitted");
+        socket.off("quiz:timer_started");
+        socket.off("quiz:timer_paused");
+        socket.off("quiz:timer_resumed");
+        socket.off("quiz:timer_reset");
+        socket.off("quiz:timer_updated");
+        socket.off("quiz:leaderboard_shown");
         socket.off("quiz:finished");
         socket.off("quiz:slots_updated");
       };
@@ -571,6 +606,122 @@ export const EventManagementPage: React.FC = () => {
     if (confirm("Are you sure you want to delete this activity?")) {
       await api.delete(`/activities/${activityId}`);
       loadEventData();
+    }
+  };
+
+  const handleSwitchQuizQuestion = async (activityId: string, questionIndex: number) => {
+    try {
+      await api.post(`/quizzes/${activityId}/switch-question`, {
+        questionIndex,
+      });
+      setQuizRevealedState({
+        isRevealed: false,
+        correctOptionId: null,
+        explanation: "",
+        optionCounts: {},
+        totalResponses: 0,
+      });
+      loadEventData();
+    } catch (err: any) {
+      console.error("Switch question error:", err);
+      alert(err.message || "Failed to switch question");
+    }
+  };
+
+  const handleStartQuizTimer = async (activityId: string, durationSeconds?: number) => {
+    try {
+      await api.post(`/quizzes/${activityId}/start-timer`, {
+        durationSeconds,
+      });
+      loadEventData();
+    } catch (err: any) {
+      console.error("Start timer error:", err);
+      alert(err.message || "Failed to start question timer");
+    }
+  };
+
+  const handlePauseQuizTimer = async (activityId: string) => {
+    try {
+      await api.post(`/quizzes/${activityId}/pause-timer`, {});
+      loadEventData();
+    } catch (err: any) {
+      console.error("Pause timer error:", err);
+      alert(err.message || "Failed to pause question timer");
+    }
+  };
+
+  const handleResumeQuizTimer = async (activityId: string) => {
+    try {
+      await api.post(`/quizzes/${activityId}/resume-timer`, {});
+      loadEventData();
+    } catch (err: any) {
+      console.error("Resume timer error:", err);
+      alert(err.message || "Failed to resume question timer");
+    }
+  };
+
+  const handleResetQuizTimer = async (activityId: string) => {
+    try {
+      await api.post(`/quizzes/${activityId}/reset-timer`, {});
+      loadEventData();
+    } catch (err: any) {
+      console.error("Reset timer error:", err);
+      alert(err.message || "Failed to reset question timer");
+    }
+  };
+
+  const handleAddQuizTime = async (activityId: string, extraSeconds: number = 10) => {
+    try {
+      await api.post(`/quizzes/${activityId}/add-time`, { extraSeconds });
+      loadEventData();
+    } catch (err: any) {
+      console.error("Add time error:", err);
+      alert(err.message || "Failed to add time");
+    }
+  };
+
+  const handleShowQuizLeaderboard = async (activityId: string) => {
+    try {
+      const res = await api.post(`/quizzes/${activityId}/show-leaderboard`, {});
+      if (res?.leaderboard) {
+        setQuizLeaderboard(res.leaderboard);
+      }
+      loadEventData();
+    } catch (err: any) {
+      console.error("Show leaderboard error:", err);
+    }
+  };
+
+  const handleRevealQuizAnswer = async (activityId: string) => {
+    try {
+      const res = await api.post(`/quizzes/${activityId}/reveal`, {});
+      if (res?.leaderboard) {
+        setQuizLeaderboard(res.leaderboard);
+      }
+      setQuizRevealedState({
+        isRevealed: true,
+        correctOptionId: res.correctOptionId,
+        explanation: res.explanation || "",
+        optionCounts: res.optionCounts || {},
+        totalResponses: res.totalResponses || 0,
+      });
+      loadEventData();
+    } catch (err: any) {
+      console.error("Reveal answer error:", err);
+      alert(err.message || "Failed to reveal answer");
+    }
+  };
+
+  const handleFinishQuiz = async (activityId: string) => {
+    try {
+      const res = await api.post(`/quizzes/${activityId}/finish`, {});
+      if (res?.leaderboard) {
+        setQuizLeaderboard(res.leaderboard);
+      }
+      loadEventData();
+    } catch (err: any) {
+      console.error("Finish quiz error:", err);
+      alert(err.message || "Failed to finish quiz");
     }
   };
 
@@ -1216,8 +1367,8 @@ export const EventManagementPage: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* Progress Bar for LIVE Activity */}
-                    {isActLive && (
+                    {/* Progress Bar for LIVE Activity (non-quiz only) */}
+                    {isActLive && activity.type !== "quiz" && (
                       <div className="w-full bg-slate-800/80 h-1.5 mt-3.5 rounded-full overflow-hidden">
                         <div
                           className={`h-full transition-all duration-1000 ease-linear rounded-full ${
@@ -1225,6 +1376,176 @@ export const EventManagementPage: React.FC = () => {
                           }`}
                           style={{ width: `${progressPct}%` }}
                         />
+                      </div>
+                    )}
+
+                    {/* LIVE QUIZ IN-CARD CONTROLLER */}
+                    {activity.type === "quiz" && isActLive && activity.questions && (
+                      <div className="mt-4 pt-3.5 border-t border-slate-800/80 space-y-3 bg-[#0d121c]/70 -mx-5 -mb-5 p-4 rounded-b-2xl">
+                        {/* Active Question Info */}
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[11px] font-mono font-bold text-purple-400 bg-purple-950/60 border border-purple-500/30 px-2 py-0.5 rounded-lg">
+                              Question {(activity.activeQuestionIndex || 0) + 1} of {activity.questions.length}
+                            </span>
+                            <span className="text-xs font-semibold text-white truncate max-w-sm">
+                              {activity.questions[activity.activeQuestionIndex || 0]?.question_text}
+                            </span>
+                          </div>
+
+                          {/* Timer / State Badge */}
+                          <div className="flex items-center gap-2">
+                            {activity.settings?.quiz_state === "ready" && (
+                              <span className="text-[10px] font-mono font-bold text-slate-400 bg-slate-800 px-2 py-0.5 rounded-md border border-slate-700">
+                                Timer Ready ({activity.questions[activity.activeQuestionIndex || 0]?.time_limit_sec || 15}s)
+                              </span>
+                            )}
+                            {activity.settings?.quiz_state === "answering" && (
+                              <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded-md border border-emerald-500/40 flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                                Timer Running
+                              </span>
+                            )}
+                            {activity.settings?.quiz_state === "paused" && (
+                              <span className="text-[10px] font-mono font-bold text-amber-400 bg-amber-950/60 px-2 py-0.5 rounded-md border border-amber-500/40 flex items-center gap-1">
+                                <Pause className="w-2.5 h-2.5" />
+                                Paused
+                              </span>
+                            )}
+                            {activity.settings?.quiz_state === "revealed" && (
+                              <span className="text-[10px] font-mono font-bold text-cyan-400 bg-cyan-950/60 px-2 py-0.5 rounded-md border border-cyan-500/40 flex items-center gap-1">
+                                <CheckCircle2 className="w-3 h-3" />
+                                Answer Revealed
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Question Switcher Pills */}
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-[10px] font-mono text-slate-400 mr-1 flex items-center gap-1">
+                            <ListOrdered className="w-3 h-3 text-cyan-400" />
+                            <span>Switch Q:</span>
+                          </span>
+                          {activity.questions.map((_, qIdx) => {
+                            const isCurrentQ = qIdx === (activity.activeQuestionIndex || 0);
+                            return (
+                              <button
+                                key={qIdx}
+                                onClick={() => handleSwitchQuizQuestion(actId, qIdx)}
+                                className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold transition-all border ${
+                                  isCurrentQ
+                                    ? "bg-purple-600 border-purple-400 text-white shadow-md shadow-purple-950/40 ring-1 ring-purple-400/50"
+                                    : "bg-slate-800/80 hover:bg-slate-700 text-slate-300 border-slate-700/60"
+                                }`}
+                                title={`Switch to Question ${qIdx + 1}`}
+                              >
+                                Q{qIdx + 1}
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {/* Action Buttons Toolbar */}
+                        <div className="flex items-center justify-between gap-2 pt-1 flex-wrap">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {activity.settings?.quiz_state === "ready" && (
+                              <button
+                                onClick={() => handleStartQuizTimer(actId)}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-black shadow-md shadow-emerald-950/30 transition-all active:scale-95"
+                              >
+                                <Play className="w-3 h-3 fill-current" />
+                                <span>START TIMER</span>
+                              </button>
+                            )}
+
+                            {activity.settings?.quiz_state === "answering" && (
+                              <>
+                                <button
+                                  onClick={() => handlePauseQuizTimer(actId)}
+                                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-bold transition-all"
+                                >
+                                  <Pause className="w-3 h-3 fill-current" />
+                                  <span>Pause</span>
+                                </button>
+                                <button
+                                  onClick={() => handleAddQuizTime(actId, 10)}
+                                  className="px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-mono font-bold"
+                                >
+                                  +10s
+                                </button>
+                              </>
+                            )}
+
+                            {activity.settings?.quiz_state === "paused" && (
+                              <>
+                                <button
+                                  onClick={() => handleResumeQuizTimer(actId)}
+                                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-black"
+                                >
+                                  <Play className="w-3 h-3 fill-current" />
+                                  <span>Resume</span>
+                                </button>
+                                <button
+                                  onClick={() => handleResetQuizTimer(actId)}
+                                  className="px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-bold"
+                                >
+                                  Reset
+                                </button>
+                              </>
+                            )}
+
+                            {activity.settings?.quiz_state !== "revealed" ? (
+                              <button
+                                onClick={() => handleRevealQuizAnswer(actId)}
+                                className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white text-xs font-bold shadow-md shadow-cyan-950/30 transition-all active:scale-95"
+                              >
+                                <Eye className="w-3 h-3" />
+                                <span>Reveal Answer</span>
+                              </button>
+                            ) : (
+                              <>
+                                <button
+                                  onClick={() => handleShowQuizLeaderboard(actId)}
+                                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700"
+                                >
+                                  <Trophy className="w-3 h-3 text-amber-400" />
+                                  <span>Leaderboard</span>
+                                </button>
+                                {(activity.activeQuestionIndex || 0) + 1 < activity.questions.length ? (
+                                  <button
+                                    onClick={() => handleSwitchQuizQuestion(actId, (activity.activeQuestionIndex || 0) + 1)}
+                                    className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-black shadow-md shadow-emerald-950/30"
+                                  >
+                                    <span>Next Question</span>
+                                    <ArrowRight className="w-3 h-3" />
+                                  </button>
+                                ) : (
+                                  <button
+                                    onClick={() => handleFinishQuiz(actId)}
+                                    className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 text-slate-950 text-xs font-black shadow-md shadow-amber-950/30"
+                                  >
+                                    <Trophy className="w-3 h-3" />
+                                    <span>Finish Quiz</span>
+                                  </button>
+                                )}
+                              </>
+                            )}
+                          </div>
+
+                          {/* Link to Full Quiz Arena / Results */}
+                          <button
+                            onClick={() => {
+                              setSelectedResultActivityId(actId);
+                              setActiveTab("results");
+                              fetchActivityResult(actId);
+                            }}
+                            className="flex items-center gap-1 text-xs font-mono font-semibold text-cyan-400 hover:text-cyan-300 transition-colors"
+                          >
+                            <span>Open Full Arena</span>
+                            <ExternalLink className="w-3 h-3" />
+                          </button>
+                        </div>
                       </div>
                     )}
 
@@ -1538,49 +1859,47 @@ export const EventManagementPage: React.FC = () => {
                           question={currentAct.questions[currentAct.activeQuestionIndex || 0]}
                           questionIndex={currentAct.activeQuestionIndex || 0}
                           totalQuestions={currentAct.questions.length}
+                          questions={currentAct.questions}
                           leaderboard={quizLeaderboard}
                           isAdmin={true}
                           quizState={currentAct.settings?.quiz_state}
                           correctOptionId={quizRevealedState.correctOptionId}
                           optionCounts={quizRevealedState.optionCounts}
                           totalResponses={quizRevealedState.totalResponses}
-                          onReveal={async () => {
-                            try {
-                              const actId = currentAct.id || (currentAct as any)._id;
-                              const res = await api.post(`/quizzes/${actId}/reveal`, {});
-                              if (res?.leaderboard) {
-                                setQuizLeaderboard(res.leaderboard);
-                              }
-                              setQuizRevealedState({
-                                isRevealed: true,
-                                correctOptionId: res.correctOptionId,
-                                explanation: res.explanation || "",
-                                optionCounts: res.optionCounts || {},
-                                totalResponses: res.totalResponses || 0,
-                              });
-                              loadEventData();
-                            } catch (err: any) {
-                              console.error("Reveal answer error:", err);
-                            }
-                          }}
-                          onAdvance={async () => {
+                          questionStartedAt={currentAct.quizQuestionStartedAt}
+                          questionEndsAt={currentAct.quizQuestionEndsAt}
+                          remainingSeconds={currentAct.settings?.quizQuestionRemainingSeconds}
+                          onSwitchQuestion={(targetIdx) =>
+                            handleSwitchQuizQuestion(currentAct.id || (currentAct as any)._id, targetIdx)
+                          }
+                          onStartTimer={(durSec) =>
+                            handleStartQuizTimer(currentAct.id || (currentAct as any)._id, durSec)
+                          }
+                          onPauseTimer={() =>
+                            handlePauseQuizTimer(currentAct.id || (currentAct as any)._id)
+                          }
+                          onResumeTimer={() =>
+                            handleResumeQuizTimer(currentAct.id || (currentAct as any)._id)
+                          }
+                          onResetTimer={() =>
+                            handleResetQuizTimer(currentAct.id || (currentAct as any)._id)
+                          }
+                          onAddTime={(extraSec) =>
+                            handleAddQuizTime(currentAct.id || (currentAct as any)._id, extraSec)
+                          }
+                          onShowLeaderboard={() =>
+                            handleShowQuizLeaderboard(currentAct.id || (currentAct as any)._id)
+                          }
+                          onReveal={() =>
+                            handleRevealQuizAnswer(currentAct.id || (currentAct as any)._id)
+                          }
+                          onAdvance={() => {
                             const nextIdx = (currentAct.activeQuestionIndex || 0) + 1;
-                            await api.post(`/quizzes/${currentAct.id || (currentAct as any)._id}/advance`, {
-                              questionIndex: nextIdx,
-                            });
-                            setQuizRevealedState({
-                              isRevealed: false,
-                              correctOptionId: null,
-                              explanation: "",
-                              optionCounts: {},
-                              totalResponses: 0,
-                            });
-                            loadEventData();
+                            handleSwitchQuizQuestion(currentAct.id || (currentAct as any)._id, nextIdx);
                           }}
-                          onFinish={async () => {
-                            await api.post(`/quizzes/${currentAct.id || (currentAct as any)._id}/finish`, {});
-                            loadEventData();
-                          }}
+                          onFinish={() =>
+                            handleFinishQuiz(currentAct.id || (currentAct as any)._id)
+                          }
                         />
                       )}
 
