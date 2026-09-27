@@ -138,6 +138,8 @@ export interface LeaderboardEntry {
   correct_answers: number;
   total_questions: number;
   total_time_ms: number;
+  average_time_ms?: number;
+  average_time_sec?: number;
   rank: number;
   answered_questions?: number;
   completion_percentage?: number;

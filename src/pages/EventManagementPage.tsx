@@ -79,16 +79,19 @@ export const EventManagementPage: React.FC = () => {
   const [pollType, setPollType] = useState<"single" | "multiple">("single");
 
   // Quiz creation inputs
+  const [activeQuizQuestionTab, setActiveQuizQuestionTab] = useState<number>(0);
   const [quizQuestions, setQuizQuestions] = useState<
     Array<{
       question_text: string;
       time_limit_sec: number;
+      explanation?: string;
       options: Array<{ text: string; is_correct: boolean }>;
     }>
   >([
     {
       question_text: "",
       time_limit_sec: 15,
+      explanation: "",
       options: [
         { text: "", is_correct: true },
         { text: "", is_correct: false },
@@ -106,6 +109,19 @@ export const EventManagementPage: React.FC = () => {
   const [pollResults, setPollResults] = useState<{ options: PollOption[]; total: number }>({ options: [], total: 0 });
   const [wordCloudWords, setWordCloudWords] = useState<any[]>([]);
   const [quizLeaderboard, setQuizLeaderboard] = useState<any[]>([]);
+  const [quizRevealedState, setQuizRevealedState] = useState<{
+    isRevealed: boolean;
+    correctOptionId: string | null;
+    explanation: string;
+    optionCounts: Record<string, number>;
+    totalResponses: number;
+  }>({
+    isRevealed: false,
+    correctOptionId: null,
+    explanation: "",
+    optionCounts: {},
+    totalResponses: 0,
+  });
   // Quiz slot state for admin view
   const [liveQuizSlots, setLiveQuizSlots] = useState<QuizSlotInfo[]>([]);
 
@@ -340,8 +356,40 @@ export const EventManagementPage: React.FC = () => {
         setQuizLeaderboard(data.leaderboard);
       });
 
+      socket.on("quiz:answer_revealed", (data) => {
+        setQuizRevealedState({
+          isRevealed: true,
+          correctOptionId: data.correctOptionId || null,
+          explanation: data.explanation || "",
+          optionCounts: data.optionCounts || {},
+          totalResponses: data.totalResponses || 0,
+        });
+        if (data.leaderboard) {
+          setQuizLeaderboard(data.leaderboard);
+        }
+      });
+
+      socket.on("quiz:question_changed", () => {
+        setQuizRevealedState({
+          isRevealed: false,
+          correctOptionId: null,
+          explanation: "",
+          optionCounts: {},
+          totalResponses: 0,
+        });
+        loadEventData();
+      });
+
+      socket.on("quiz:answer_submitted", () => {
+        setQuizRevealedState((prev) => ({
+          ...prev,
+          totalResponses: prev.totalResponses + 1,
+        }));
+      });
+
       socket.on("quiz:finished", (data) => {
         setQuizLeaderboard(data.leaderboard);
+        loadEventData();
       });
 
       socket.on("quiz:slots_updated", (data) => {
@@ -366,6 +414,9 @@ export const EventManagementPage: React.FC = () => {
         socket.off("poll:results_updated");
         socket.off("wordcloud:updated");
         socket.off("quiz:leaderboard_updated");
+        socket.off("quiz:answer_revealed");
+        socket.off("quiz:question_changed");
+        socket.off("quiz:answer_submitted");
         socket.off("quiz:finished");
         socket.off("quiz:slots_updated");
       };
@@ -553,10 +604,30 @@ export const EventManagementPage: React.FC = () => {
         settings: { show_live_results: true },
       });
     } else if (activityType === "quiz") {
+      // Validate all questions
+      for (let i = 0; i < quizQuestions.length; i++) {
+        const q = quizQuestions[i];
+        if (!q.question_text.trim()) {
+          alert(`Question ${i + 1} needs a question title/prompt.`);
+          return;
+        }
+        for (let j = 0; j < q.options.length; j++) {
+          if (!q.options[j].text.trim()) {
+            alert(`Question ${i + 1}, Choice ${String.fromCharCode(65 + j)} cannot be empty.`);
+            return;
+          }
+        }
+        if (!q.options.some((o) => o.is_correct)) {
+          alert(`Question ${i + 1} must have one option selected as the correct answer.`);
+          return;
+        }
+      }
+
       const questions = quizQuestions.map((q, qIdx) => ({
         question_text: q.question_text.trim(),
         time_limit_sec: q.time_limit_sec || 15,
         points: 1000,
+        explanation: q.explanation?.trim() || "",
         order_index: qIdx,
         options: q.options.map((opt, oIdx) => ({
           option_text: opt.text.trim(),
@@ -590,10 +661,12 @@ export const EventManagementPage: React.FC = () => {
     setCustomDurationVal("30");
     setQuizSlotsEnabled(false);
     setQuizSlotInputs(["Slot 1", "Slot 2", "Slot 3"]);
+    setActiveQuizQuestionTab(0);
     setQuizQuestions([
       {
         question_text: "",
         time_limit_sec: 15,
+        explanation: "",
         options: [
           { text: "", is_correct: true },
           { text: "", is_correct: false },
@@ -1467,10 +1540,40 @@ export const EventManagementPage: React.FC = () => {
                           totalQuestions={currentAct.questions.length}
                           leaderboard={quizLeaderboard}
                           isAdmin={true}
+                          quizState={currentAct.settings?.quiz_state}
+                          correctOptionId={quizRevealedState.correctOptionId}
+                          optionCounts={quizRevealedState.optionCounts}
+                          totalResponses={quizRevealedState.totalResponses}
+                          onReveal={async () => {
+                            try {
+                              const actId = currentAct.id || (currentAct as any)._id;
+                              const res = await api.post(`/quizzes/${actId}/reveal`, {});
+                              if (res?.leaderboard) {
+                                setQuizLeaderboard(res.leaderboard);
+                              }
+                              setQuizRevealedState({
+                                isRevealed: true,
+                                correctOptionId: res.correctOptionId,
+                                explanation: res.explanation || "",
+                                optionCounts: res.optionCounts || {},
+                                totalResponses: res.totalResponses || 0,
+                              });
+                              loadEventData();
+                            } catch (err: any) {
+                              console.error("Reveal answer error:", err);
+                            }
+                          }}
                           onAdvance={async () => {
                             const nextIdx = (currentAct.activeQuestionIndex || 0) + 1;
                             await api.post(`/quizzes/${currentAct.id || (currentAct as any)._id}/advance`, {
                               questionIndex: nextIdx,
+                            });
+                            setQuizRevealedState({
+                              isRevealed: false,
+                              correctOptionId: null,
+                              explanation: "",
+                              optionCounts: {},
+                              totalResponses: 0,
                             });
                             loadEventData();
                           }}
@@ -1790,58 +1893,186 @@ export const EventManagementPage: React.FC = () => {
 
                 {activityType === "quiz" && (
                   <div className="space-y-4 pt-2">
-                    <label className="block text-xs font-semibold text-slate-300">
-                      Question 1
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={quizQuestions[0].question_text}
-                      onChange={(e) => {
-                        const copy = [...quizQuestions];
-                        copy[0].question_text = e.target.value;
-                        setQuizQuestions(copy);
-                      }}
-                      placeholder="e.g. Which company created React?"
-                      className="w-full bg-[#090d14] border border-slate-700/80 rounded-xl px-4 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 transition-colors"
-                    />
+                    {/* Question Tabs Bar */}
+                    <div className="flex items-center justify-between gap-2 border-b border-slate-800/80 pb-3">
+                      <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none py-1">
+                        {quizQuestions.map((_, qIdx) => (
+                          <button
+                            key={qIdx}
+                            type="button"
+                            onClick={() => setActiveQuizQuestionTab(qIdx)}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-bold font-mono transition-all flex items-center gap-1.5 flex-shrink-0 ${
+                              activeQuizQuestionTab === qIdx
+                                ? "bg-purple-600 text-white shadow-md shadow-purple-950/40 ring-1 ring-purple-400/50"
+                                : "bg-[#090d14] text-slate-400 hover:text-slate-200 border border-slate-800"
+                            }`}
+                          >
+                            <span>Q{qIdx + 1}</span>
+                          </button>
+                        ))}
+                      </div>
 
-                    <div className="grid grid-cols-2 gap-2.5">
-                      {quizQuestions[0].options.map((opt, idx) => (
-                        <div
-                          key={idx}
-                          className={`flex items-center gap-2 p-2.5 rounded-xl border transition-all ${
-                            opt.is_correct
-                              ? "border-emerald-500/60 bg-emerald-950/20"
-                              : "border-slate-800 bg-[#090d14]"
-                          }`}
-                        >
-                          <input
-                            type="radio"
-                            name="correct_option"
-                            checked={opt.is_correct}
-                            onChange={() => {
-                              const copy = [...quizQuestions];
-                              copy[0].options.forEach((o, i) => (o.is_correct = i === idx));
-                              setQuizQuestions(copy);
-                            }}
-                            className="text-emerald-500 focus:ring-emerald-500 cursor-pointer"
-                          />
-                          <input
-                            type="text"
-                            required
-                            value={opt.text}
-                            onChange={(e) => {
-                              const copy = [...quizQuestions];
-                              copy[0].options[idx].text = e.target.value;
-                              setQuizQuestions(copy);
-                            }}
-                            placeholder={`Choice ${String.fromCharCode(65 + idx)}`}
-                            className="bg-transparent text-xs text-white focus:outline-none w-full"
-                          />
-                        </div>
-                      ))}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const newQuestions = [
+                            ...quizQuestions,
+                            {
+                              question_text: "",
+                              time_limit_sec: 15,
+                              explanation: "",
+                              options: [
+                                { text: "", is_correct: true },
+                                { text: "", is_correct: false },
+                                { text: "", is_correct: false },
+                                { text: "", is_correct: false },
+                              ],
+                            },
+                          ];
+                          setQuizQuestions(newQuestions);
+                          setActiveQuizQuestionTab(newQuestions.length - 1);
+                        }}
+                        className="px-3 py-1.5 rounded-xl text-xs font-bold bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/30 transition-all flex items-center gap-1 flex-shrink-0 shadow-sm"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Add Question</span>
+                      </button>
                     </div>
+
+                    {/* Active Question Editor */}
+                    {(() => {
+                      const curIdx = Math.min(activeQuizQuestionTab, quizQuestions.length - 1);
+                      const curQ = quizQuestions[curIdx];
+                      if (!curQ) return null;
+
+                      return (
+                        <div className="space-y-3.5 bg-[#090d14]/70 p-4 rounded-2xl border border-slate-800">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-purple-300 font-mono flex items-center gap-1.5">
+                              <span>Question {curIdx + 1} of {quizQuestions.length}</span>
+                            </span>
+
+                            <div className="flex items-center gap-2">
+                              {/* Time limit select */}
+                              <div className="flex items-center gap-1.5 text-xs text-slate-400">
+                                <Clock className="w-3.5 h-3.5 text-cyan-400" />
+                                <select
+                                  value={curQ.time_limit_sec || 15}
+                                  onChange={(e) => {
+                                    const copy = [...quizQuestions];
+                                    copy[curIdx].time_limit_sec = Number(e.target.value);
+                                    setQuizQuestions(copy);
+                                  }}
+                                  className="bg-[#121722] border border-slate-700/80 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-purple-500 font-mono"
+                                >
+                                  <option value={10}>10s</option>
+                                  <option value={15}>15s</option>
+                                  <option value={20}>20s</option>
+                                  <option value={30}>30s</option>
+                                  <option value={45}>45s</option>
+                                  <option value={60}>60s</option>
+                                </select>
+                              </div>
+
+                              {/* Delete Question (if > 1) */}
+                              {quizQuestions.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const copy = quizQuestions.filter((_, idx) => idx !== curIdx);
+                                    setQuizQuestions(copy);
+                                    setActiveQuizQuestionTab(Math.max(0, curIdx - 1));
+                                  }}
+                                  className="p-1 rounded-lg text-rose-400 hover:bg-rose-500/10 transition-colors"
+                                  title="Delete this question"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Question text */}
+                          <div>
+                            <input
+                              type="text"
+                              required
+                              value={curQ.question_text}
+                              onChange={(e) => {
+                                const copy = [...quizQuestions];
+                                copy[curIdx].question_text = e.target.value;
+                                setQuizQuestions(copy);
+                              }}
+                              placeholder={`e.g. Question ${curIdx + 1}: What is the capital of France?`}
+                              className="w-full bg-[#121722] border border-slate-700/80 rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 transition-colors"
+                            />
+                          </div>
+
+                          {/* Options grid */}
+                          <div>
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-[11px] font-semibold text-slate-400">
+                                Choices (Select radio button for the correct answer):
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                              {curQ.options.map((opt, idx) => (
+                                <div
+                                  key={idx}
+                                  className={`flex items-center gap-2 p-2.5 rounded-xl border transition-all ${
+                                    opt.is_correct
+                                      ? "border-emerald-500/60 bg-emerald-950/30 ring-1 ring-emerald-500/40"
+                                      : "border-slate-800 bg-[#121722]"
+                                  }`}
+                                >
+                                  <input
+                                    type="radio"
+                                    name={`correct_option_${curIdx}`}
+                                    checked={opt.is_correct}
+                                    onChange={() => {
+                                      const copy = [...quizQuestions];
+                                      copy[curIdx].options.forEach((o, i) => (o.is_correct = i === idx));
+                                      setQuizQuestions(copy);
+                                    }}
+                                    className="text-emerald-500 focus:ring-emerald-500 cursor-pointer h-4 w-4"
+                                  />
+                                  <span className="text-xs font-mono font-bold text-slate-400 flex-shrink-0">
+                                    {String.fromCharCode(65 + idx)}:
+                                  </span>
+                                  <input
+                                    type="text"
+                                    required
+                                    value={opt.text}
+                                    onChange={(e) => {
+                                      const copy = [...quizQuestions];
+                                      copy[curIdx].options[idx].text = e.target.value;
+                                      setQuizQuestions(copy);
+                                    }}
+                                    placeholder={`Choice ${String.fromCharCode(65 + idx)}`}
+                                    className="bg-transparent text-xs text-white focus:outline-none w-full"
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Optional Explanation */}
+                          <div>
+                            <input
+                              type="text"
+                              value={curQ.explanation || ""}
+                              onChange={(e) => {
+                                const copy = [...quizQuestions];
+                                copy[curIdx].explanation = e.target.value;
+                                setQuizQuestions(copy);
+                              }}
+                              placeholder="Optional explanation shown when answer is revealed (e.g. Paris is the capital)"
+                              className="w-full bg-[#121722] border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-300 placeholder-slate-500 focus:outline-none focus:border-purple-500 transition-colors"
+                            />
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     {/* ── Quiz Slot Selector ── */}
                     <div className="border border-slate-700/60 rounded-2xl overflow-hidden">

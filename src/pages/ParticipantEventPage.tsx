@@ -13,6 +13,10 @@ import {
   Radio,
   Trophy,
   ChevronDown,
+  CheckCircle,
+  XCircle,
+  AlertCircle,
+  Zap,
 } from "lucide-react";
 import { api } from "../services/api";
 import { getSocket, joinEventRoom, leaveEventRoom } from "../services/socket";
@@ -88,6 +92,18 @@ export const ParticipantEventPage: React.FC = () => {
   const [quizQuestionEndsAt, setQuizQuestionEndsAt] = useState<string | null>(null);
   const [quizSubmitError, setQuizSubmitError] = useState<string | null>(null);
   const [quizLeaderboard, setQuizLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [quizAnswerResult, setQuizAnswerResult] = useState<{
+    isRevealed: boolean;
+    correctOptionId: string | null;
+    explanation: string;
+    isCorrect?: boolean;
+    scoreAwarded?: number;
+    timeTakenMs?: number;
+  }>({
+    isRevealed: false,
+    correctOptionId: null,
+    explanation: "",
+  });
 
   // Quiz Slot state
   const [quizSlots, setQuizSlots] = useState<QuizSlotInfo[]>([]);
@@ -353,12 +369,37 @@ export const ParticipantEventPage: React.FC = () => {
         setHasSubmittedQuiz(false);
         setSelectedQuizOption(null);
         setQuizSubmitError(null);
+        setQuizAnswerResult({
+          isRevealed: false,
+          correctOptionId: null,
+          explanation: "",
+        });
         // Store server-provided deadline
         if (data.questionEndsAt) {
           setQuizQuestionEndsAt(data.questionEndsAt);
         }
         setActiveActivity((prev) =>
-          prev ? { ...prev, activeQuestionIndex: data.questionIndex, quizQuestionEndsAt: data.questionEndsAt } : null
+          prev ? { ...prev, activeQuestionIndex: data.questionIndex, quizQuestionEndsAt: data.questionEndsAt, settings: { ...prev.settings, quiz_state: "answering" } } : null
+        );
+      });
+
+      socket.on("quiz:answer_revealed", (data: any) => {
+        setQuizAnswerResult((prev) => {
+          const correctOptId = data.correctOptionId || null;
+          const wasCorrect = selectedQuizOption && correctOptId ? (selectedQuizOption === correctOptId) : prev.isCorrect;
+          return {
+            ...prev,
+            isRevealed: true,
+            correctOptionId: correctOptId,
+            explanation: data.explanation || "",
+            isCorrect: wasCorrect,
+          };
+        });
+        if (data.leaderboard) {
+          setQuizLeaderboard(data.leaderboard);
+        }
+        setActiveActivity((prev) =>
+          prev ? { ...prev, settings: { ...prev.settings, quiz_state: "revealed" } } : null
         );
       });
 
@@ -395,6 +436,7 @@ export const ParticipantEventPage: React.FC = () => {
         socket.off("poll:results_updated");
         socket.off("wordcloud:updated");
         socket.off("quiz:question_changed");
+        socket.off("quiz:answer_revealed");
         socket.off("quiz:leaderboard_updated");
         socket.off("quiz:finished");
         socket.off("quiz:slots_updated");
@@ -497,7 +539,7 @@ export const ParticipantEventPage: React.FC = () => {
     setQuizSubmitError(null);
     try {
       const actId = activeActivity.id || activeActivity._id;
-      await api.post(`/quizzes/${actId}/answer`, {
+      const res = await api.post(`/quizzes/${actId}/answer`, {
         questionId: currentQ.id || (currentQ as any)._id,
         optionId: selectedQuizOption,
         participantId: participant.id || participant._id,
@@ -505,6 +547,14 @@ export const ParticipantEventPage: React.FC = () => {
         // timeTakenMs is intentionally omitted — server calculates it authoritatively
       });
       setHasSubmittedQuiz(true);
+      if (res && res.isCorrect !== undefined) {
+        setQuizAnswerResult((prev) => ({
+          ...prev,
+          isCorrect: res.isCorrect,
+          scoreAwarded: res.scoreAwarded,
+          timeTakenMs: res.timeTakenMs,
+        }));
+      }
     } catch (e: any) {
       const msg = e?.response?.data?.message || e?.message || "Submission failed";
       if (e?.response?.status === 409) {
@@ -1184,58 +1234,170 @@ export const ParticipantEventPage: React.FC = () => {
                       {(currentQ.options || []).map((opt, idx) => {
                         const optId = opt.id || opt._id || "";
                         const isSelected = selectedQuizOption === optId;
+                        const isRevealed = quizAnswerResult.isRevealed || activeActivity.settings?.quiz_state === "revealed";
+                        const isCorrectOption = Boolean(
+                          (quizAnswerResult.correctOptionId && optId === quizAnswerResult.correctOptionId) ||
+                          (isRevealed && opt.is_correct)
+                        );
+                        const isWrongSelection = isRevealed && isSelected && !isCorrectOption;
+
+                        let cardStyle = "bg-[#121722] border-slate-800/90 text-slate-200 hover:border-slate-700/80";
+                        if (isRevealed) {
+                          if (isCorrectOption) {
+                            cardStyle = "bg-emerald-950/70 border-emerald-500 text-emerald-200 ring-2 ring-emerald-500/50 shadow-xl shadow-emerald-950/40";
+                          } else if (isWrongSelection) {
+                            cardStyle = "bg-rose-950/60 border-rose-500 text-rose-300 ring-1 ring-rose-500/40";
+                          } else {
+                            cardStyle = "bg-[#090d14]/60 border-slate-800/40 text-slate-500 opacity-60";
+                          }
+                        } else if (isSelected) {
+                          cardStyle = "bg-purple-950/60 border-purple-500 text-white ring-1 ring-purple-500/50 shadow-lg shadow-purple-950/30";
+                        }
+
                         return (
                           <button
                             key={optId || idx}
-                            disabled={hasSubmittedQuiz || quizTimer === 0 || isActPaused}
+                            disabled={hasSubmittedQuiz || quizTimer === 0 || isActPaused || isRevealed}
                             onClick={() => setSelectedQuizOption(optId)}
-                            className={`w-full text-left p-4 rounded-2xl border transition-all flex items-center justify-between ${
-                              isSelected
-                                ? "bg-purple-950/60 border-purple-500 text-white ring-1 ring-purple-500/50 shadow-lg shadow-purple-950/30"
-                                : "bg-[#121722] border-slate-800/90 text-slate-200 hover:border-slate-700/80"
-                            } ${(hasSubmittedQuiz || quizTimer === 0 || isActPaused) ? "opacity-80" : "active:scale-[0.99]"}`}
+                            className={`w-full text-left p-4 rounded-2xl border transition-all flex items-center justify-between ${cardStyle} ${
+                              hasSubmittedQuiz || quizTimer === 0 || isActPaused || isRevealed
+                                ? ""
+                                : "active:scale-[0.99]"
+                            }`}
                           >
                             <div className="flex items-center gap-3">
-                              <span className="w-6 h-6 rounded-lg bg-slate-800 text-slate-300 text-xs font-mono font-bold flex items-center justify-center border border-slate-700">
+                              <span
+                                className={`w-6 h-6 rounded-lg text-xs font-mono font-bold flex items-center justify-center border ${
+                                  isRevealed && isCorrectOption
+                                    ? "bg-emerald-500 text-slate-950 border-emerald-400"
+                                    : isRevealed && isWrongSelection
+                                    ? "bg-rose-500 text-white border-rose-400"
+                                    : "bg-slate-800 text-slate-300 border-slate-700"
+                                }`}
+                              >
                                 {String.fromCharCode(65 + idx)}
                               </span>
                               <span className="text-sm font-semibold">{opt.option_text}</span>
                             </div>
 
-                            {isSelected && (
-                              <Check className="w-4 h-4 text-purple-400 flex-shrink-0" />
+                            {isRevealed ? (
+                              isCorrectOption ? (
+                                <CheckCircle className="w-5 h-5 text-emerald-400 flex-shrink-0" />
+                              ) : isWrongSelection ? (
+                                <XCircle className="w-5 h-5 text-rose-400 flex-shrink-0" />
+                              ) : null
+                            ) : (
+                              isSelected && <Check className="w-4 h-4 text-purple-400 flex-shrink-0" />
                             )}
                           </button>
                         );
                       })}
                     </div>
 
-                    {!hasSubmittedQuiz ? (
-                      <button
-                        onClick={handleAnswerQuiz}
-                        disabled={!selectedQuizOption || quizTimer === 0 || isActPaused}
-                        className="w-full py-3.5 rounded-2xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-sm shadow-lg shadow-purple-950/40 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                      >
-                        {isActPaused ? "Quiz is Paused" : quizTimer === 0 ? "Time's Up!" : "Submit Answer"}
-                      </button>
-                    ) : (
-                      <div className="p-3 bg-purple-950/40 border border-purple-500/30 rounded-2xl text-center space-y-0.5">
-                        <div className="flex items-center justify-center gap-1.5 text-xs font-bold text-purple-300">
-                          <Check className="w-4 h-4" />
-                          <span>Answer locked in!</span>
-                        </div>
-                        <p className="text-[11px] text-slate-400">
-                          Waiting for presenter to advance question...
-                        </p>
-                      </div>
-                    )}
+                    {/* Reveal Outcome / Action buttons */}
+                    {(() => {
+                      const isRevealed = quizAnswerResult.isRevealed || activeActivity.settings?.quiz_state === "revealed";
 
-                    {/* Error display for submission failures */}
-                    {quizSubmitError && !hasSubmittedQuiz && (
-                      <div className="p-2.5 bg-rose-950/40 border border-rose-500/30 rounded-xl text-center">
-                        <p className="text-xs text-rose-300 font-semibold">{quizSubmitError}</p>
-                      </div>
-                    )}
+                      if (isRevealed) {
+                        const correctOptId = quizAnswerResult.correctOptionId;
+                        const userWasCorrect = Boolean(
+                          selectedQuizOption && correctOptId
+                            ? selectedQuizOption === correctOptId
+                            : quizAnswerResult.isCorrect
+                        );
+
+                        return (
+                          <div className="space-y-3 pt-1">
+                            {hasSubmittedQuiz ? (
+                              userWasCorrect ? (
+                                <div className="p-4 bg-gradient-to-r from-emerald-950/70 to-teal-950/70 border border-emerald-500/50 rounded-2xl text-center space-y-1 shadow-lg shadow-emerald-950/30">
+                                  <div className="flex items-center justify-center gap-2 text-base font-black text-emerald-300">
+                                    <Sparkles className="w-4 h-4 text-emerald-400" />
+                                    <span>Correct Answer!</span>
+                                    {quizAnswerResult.scoreAwarded !== undefined && (
+                                      <span className="text-amber-300 font-mono text-xs px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/40">
+                                        +{quizAnswerResult.scoreAwarded} pts
+                                      </span>
+                                    )}
+                                  </div>
+                                  {quizAnswerResult.timeTakenMs !== undefined && (
+                                    <p className="text-xs font-mono text-cyan-300 flex items-center justify-center gap-1">
+                                      <Zap className="w-3.5 h-3.5 text-cyan-400" />
+                                      <span>Answered in {(quizAnswerResult.timeTakenMs / 1000).toFixed(2)}s</span>
+                                    </p>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="p-3.5 bg-rose-950/50 border border-rose-500/40 rounded-2xl text-center space-y-0.5">
+                                  <div className="text-sm font-black text-rose-300">
+                                    ❌ Incorrect Choice
+                                  </div>
+                                  <p className="text-xs text-slate-400">
+                                    Better speed & accuracy on the next question!
+                                  </p>
+                                </div>
+                              )
+                            ) : (
+                              <div className="p-3.5 bg-slate-900/60 border border-slate-700/60 rounded-2xl text-center space-y-0.5">
+                                <div className="text-xs font-bold text-amber-400">
+                                  ⏰ Time Expired
+                                </div>
+                                <p className="text-[11px] text-slate-400">
+                                  No response was submitted in time.
+                                </p>
+                              </div>
+                            )}
+
+                            {/* Explanation if present */}
+                            {(currentQ.explanation || quizAnswerResult.explanation) && (
+                              <div className="bg-[#090d14] border border-emerald-500/30 rounded-2xl p-3.5 text-xs text-slate-300 flex items-start gap-2.5 shadow-inner">
+                                <AlertCircle className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
+                                <div>
+                                  <span className="font-bold text-emerald-400">Explanation: </span>
+                                  {currentQ.explanation || quizAnswerResult.explanation}
+                                </div>
+                              </div>
+                            )}
+
+                            <p className="text-center text-xs text-slate-400 font-medium pt-1">
+                              {qIdx + 1 < activeActivity.questions.length
+                                ? "Waiting for presenter to pass next question..."
+                                : "Waiting for presenter to announce the champion winner 🏆..."}
+                            </p>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="space-y-3">
+                          {!hasSubmittedQuiz ? (
+                            <button
+                              onClick={handleAnswerQuiz}
+                              disabled={!selectedQuizOption || quizTimer === 0 || isActPaused}
+                              className="w-full py-3.5 rounded-2xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-sm shadow-lg shadow-purple-950/40 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                              {isActPaused ? "Quiz is Paused" : quizTimer === 0 ? "Time's Up!" : "Submit Answer"}
+                            </button>
+                          ) : (
+                            <div className="p-3 bg-purple-950/40 border border-purple-500/30 rounded-2xl text-center space-y-0.5">
+                              <div className="flex items-center justify-center gap-1.5 text-xs font-bold text-purple-300">
+                                <Check className="w-4 h-4" />
+                                <span>Answer locked in!</span>
+                              </div>
+                              <p className="text-[11px] text-slate-400">
+                                Waiting for presenter to reveal the answer...
+                              </p>
+                            </div>
+                          )}
+
+                          {quizSubmitError && !hasSubmittedQuiz && (
+                            <div className="p-2.5 bg-rose-950/40 border border-rose-500/30 rounded-xl text-center">
+                              <p className="text-xs text-rose-300 font-semibold">{quizSubmitError}</p>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })()
