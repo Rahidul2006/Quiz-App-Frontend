@@ -84,7 +84,8 @@ export interface ActivitySettings {
   show_live_results?: boolean;
   allow_user_options?: boolean;
   timer_seconds?: number;
-  quiz_state?: 'answering' | 'revealed' | 'leaderboard';
+  quiz_state?: 'ready' | 'answering' | 'paused' | 'revealed' | 'leaderboard';
+  quizQuestionRemainingSeconds?: number | null;
   // Quiz slot-based participation
   quiz_slots?: string[];
   require_slot_selection?: boolean;

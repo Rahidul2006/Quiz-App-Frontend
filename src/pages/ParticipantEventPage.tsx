@@ -374,12 +374,102 @@ export const ParticipantEventPage: React.FC = () => {
           correctOptionId: null,
           explanation: "",
         });
-        // Store server-provided deadline
+        setQuizQuestionEndsAt(data.questionEndsAt || null);
+        setActiveActivity((prev) =>
+          prev
+            ? {
+                ...prev,
+                activeQuestionIndex: data.questionIndex,
+                quizQuestionEndsAt: data.questionEndsAt || null,
+                settings: {
+                  ...prev.settings,
+                  quiz_state: data.quizState || "ready",
+                  quizQuestionRemainingSeconds: null,
+                },
+              }
+            : null
+        );
+      });
+
+      socket.on("quiz:timer_started", (data: any) => {
         if (data.questionEndsAt) {
           setQuizQuestionEndsAt(data.questionEndsAt);
         }
         setActiveActivity((prev) =>
-          prev ? { ...prev, activeQuestionIndex: data.questionIndex, quizQuestionEndsAt: data.questionEndsAt, settings: { ...prev.settings, quiz_state: "answering" } } : null
+          prev
+            ? {
+                ...prev,
+                quizQuestionEndsAt: data.questionEndsAt,
+                settings: { ...prev.settings, quiz_state: "answering", quizQuestionRemainingSeconds: null },
+              }
+            : null
+        );
+      });
+
+      socket.on("quiz:timer_paused", (data: any) => {
+        setActiveActivity((prev) =>
+          prev
+            ? {
+                ...prev,
+                settings: {
+                  ...prev.settings,
+                  quiz_state: "paused",
+                  quizQuestionRemainingSeconds: data.remainingSeconds,
+                },
+              }
+            : null
+        );
+      });
+
+      socket.on("quiz:timer_resumed", (data: any) => {
+        if (data.questionEndsAt) {
+          setQuizQuestionEndsAt(data.questionEndsAt);
+        }
+        setActiveActivity((prev) =>
+          prev
+            ? {
+                ...prev,
+                quizQuestionEndsAt: data.questionEndsAt,
+                settings: { ...prev.settings, quiz_state: "answering", quizQuestionRemainingSeconds: null },
+              }
+            : null
+        );
+      });
+
+      socket.on("quiz:timer_reset", () => {
+        setQuizQuestionEndsAt(null);
+        setActiveActivity((prev) =>
+          prev
+            ? {
+                ...prev,
+                quizQuestionEndsAt: null,
+                settings: { ...prev.settings, quiz_state: "ready", quizQuestionRemainingSeconds: null },
+              }
+            : null
+        );
+      });
+
+      socket.on("quiz:timer_updated", (data: any) => {
+        if (data.questionEndsAt) {
+          setQuizQuestionEndsAt(data.questionEndsAt);
+        }
+        setActiveActivity((prev) =>
+          prev
+            ? {
+                ...prev,
+                quizQuestionEndsAt: data.questionEndsAt,
+                settings: { ...prev.settings, quiz_state: "answering" },
+              }
+            : null
+        );
+      });
+
+      socket.on("quiz:leaderboard_shown", (data: any) => {
+        if (data?.leaderboard) {
+          setQuizLeaderboard(data.leaderboard);
+        }
+        setActiveActivity((prev) =>
+          prev ? { ...prev, settings: { ...prev.settings, quiz_state: "leaderboard" } } : null
         );
       });
 
@@ -436,6 +526,12 @@ export const ParticipantEventPage: React.FC = () => {
         socket.off("poll:results_updated");
         socket.off("wordcloud:updated");
         socket.off("quiz:question_changed");
+        socket.off("quiz:timer_started");
+        socket.off("quiz:timer_paused");
+        socket.off("quiz:timer_resumed");
+        socket.off("quiz:timer_reset");
+        socket.off("quiz:timer_updated");
+        socket.off("quiz:leaderboard_shown");
         socket.off("quiz:answer_revealed");
         socket.off("quiz:leaderboard_updated");
         socket.off("quiz:finished");
@@ -1207,19 +1303,27 @@ export const ParticipantEventPage: React.FC = () => {
                       </span>
 
                       <div className={`flex items-center gap-1.5 font-mono font-bold text-sm px-3 py-1 rounded-full border ${
-                        isActPaused
+                        isActPaused || activeActivity.settings?.quiz_state === "paused"
                           ? "bg-amber-950/50 border-amber-500/40 text-amber-300"
-                          : actIsUrgent || quizTimer <= 5
+                          : activeActivity.settings?.quiz_state === "ready"
+                          ? "bg-slate-800/80 text-slate-300 border-slate-700/60"
+                          : quizTimer <= 5
                           ? "bg-rose-500/20 text-rose-300 border-rose-500/50 animate-pulse"
                           : "bg-slate-800/80 text-slate-200 border-slate-700/60"
                       }`}>
-                        {isActPaused ? (
+                        {isActPaused || activeActivity.settings?.quiz_state === "paused" ? (
                           <Pause className="w-3.5 h-3.5 text-amber-400" />
                         ) : (
-                          <Clock className={`w-3.5 h-3.5 ${actIsUrgent || quizTimer <= 5 ? "text-rose-400" : "text-cyan-400"}`} />
+                          <Clock className={`w-3.5 h-3.5 ${quizTimer <= 5 && activeActivity.settings?.quiz_state === "answering" ? "text-rose-400" : "text-cyan-400"}`} />
                         )}
                         <span className="tabular-nums">
-                          {actRemaining !== null ? formatSeconds(actRemaining) : `00:${quizTimer.toString().padStart(2, "0")}`}
+                          {activeActivity.settings?.quiz_state === "ready"
+                            ? `${currentQ.time_limit_sec || 15}s (Ready)`
+                            : isActPaused || activeActivity.settings?.quiz_state === "paused"
+                            ? typeof activeActivity.settings?.quizQuestionRemainingSeconds === "number"
+                              ? `${activeActivity.settings.quizQuestionRemainingSeconds}s (Paused)`
+                              : "PAUSED"
+                            : `00:${quizTimer.toString().padStart(2, "0")}`}
                         </span>
                       </div>
                     </div>
@@ -1370,13 +1474,45 @@ export const ParticipantEventPage: React.FC = () => {
 
                       return (
                         <div className="space-y-3">
+                          {activeActivity.settings?.quiz_state === "ready" && (
+                            <div className="p-3 bg-purple-950/30 border border-purple-500/25 rounded-2xl text-center animate-in fade-in">
+                              <p className="text-xs text-purple-300 font-semibold flex items-center justify-center gap-1.5">
+                                <Clock className="w-3.5 h-3.5 text-purple-400" />
+                                <span>Read the question carefully. The host will start the countdown timer shortly!</span>
+                              </p>
+                            </div>
+                          )}
+
+                          {activeActivity.settings?.quiz_state === "paused" && (
+                            <div className="p-3 bg-amber-950/30 border border-amber-500/25 rounded-2xl text-center animate-in fade-in">
+                              <p className="text-xs text-amber-300 font-semibold flex items-center justify-center gap-1.5">
+                                <Pause className="w-3.5 h-3.5 text-amber-400" />
+                                <span>The question timer is currently paused by the organizer.</span>
+                              </p>
+                            </div>
+                          )}
+
                           {!hasSubmittedQuiz ? (
                             <button
                               onClick={handleAnswerQuiz}
-                              disabled={!selectedQuizOption || quizTimer === 0 || isActPaused}
+                              disabled={
+                                !selectedQuizOption ||
+                                activeActivity.settings?.quiz_state === "ready" ||
+                                activeActivity.settings?.quiz_state === "paused" ||
+                                isActPaused ||
+                                quizTimer === 0
+                              }
                               className="w-full py-3.5 rounded-2xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-sm shadow-lg shadow-purple-950/40 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                             >
-                              {isActPaused ? "Quiz is Paused" : quizTimer === 0 ? "Time's Up!" : "Submit Answer"}
+                              {activeActivity.settings?.quiz_state === "ready"
+                                ? "Waiting for Host to Start Timer..."
+                                : isActPaused || activeActivity.settings?.quiz_state === "paused"
+                                ? "Question Timer is Paused"
+                                : quizTimer === 0
+                                ? "Time's Up!"
+                                : !selectedQuizOption
+                                ? "Select an Option to Submit"
+                                : "Submit Answer"}
                             </button>
                           ) : (
                             <div className="p-3 bg-purple-950/40 border border-purple-500/30 rounded-2xl text-center space-y-0.5">
