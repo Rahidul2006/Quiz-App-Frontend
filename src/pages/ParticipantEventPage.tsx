@@ -12,6 +12,7 @@ import {
   X,
   Radio,
   Trophy,
+  ChevronDown,
 } from "lucide-react";
 import { api } from "../services/api";
 import { getSocket, joinEventRoom, leaveEventRoom } from "../services/socket";
@@ -22,6 +23,7 @@ import {
   PollOption,
   LeaderboardEntry,
   WordFrequency,
+  QuizSlotInfo,
 } from "../types";
 import { QrModal } from "../components/qr/QrModal";
 import { QuizLeaderboard } from "../components/activities/QuizLeaderboard";
@@ -87,6 +89,15 @@ export const ParticipantEventPage: React.FC = () => {
   const [quizSubmitError, setQuizSubmitError] = useState<string | null>(null);
   const [quizLeaderboard, setQuizLeaderboard] = useState<LeaderboardEntry[]>([]);
 
+  // Quiz Slot state
+  const [quizSlots, setQuizSlots] = useState<QuizSlotInfo[]>([]);
+  const [myClaimedSlot, setMyClaimedSlot] = useState<string | null>(null);
+  const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
+  const [claimingSlot, setClaimingSlot] = useState(false);
+  const [slotError, setSlotError] = useState<string | null>(null);
+  const [slotsEnabled, setSlotsEnabled] = useState(false);
+  const [loadingSlots, setLoadingSlots] = useState(false);
+
   const loadData = async () => {
     if (!eventId) return;
     try {
@@ -149,6 +160,41 @@ export const ParticipantEventPage: React.FC = () => {
         }
       } else {
         setActiveActivity(null);
+      }
+
+      // Load quiz slot data if applicable
+      const refreshedActId = ev.activeActivityId || ev.active_activity_id;
+      if (refreshedActId) {
+        const actsForSlot = await api.get(`/activities/${refreshedActId}`).catch(() => null);
+        if (actsForSlot?.type === "quiz" && actsForSlot?.settings?.require_slot_selection) {
+          setSlotsEnabled(true);
+          setLoadingSlots(true);
+          try {
+            const slotData = await api.get(`/quizzes/${refreshedActId}/quiz-slots`);
+            if (slotData.slotsEnabled) {
+              setQuizSlots(slotData.slots || []);
+            }
+            const pId = currentPart?.id || (currentPart as any)?._id;
+            if (pId) {
+              const mySlotData = await api.get(`/quizzes/${refreshedActId}/quiz-slots/my-slot?participantId=${pId}`);
+              if (mySlotData.hasClaimed) {
+                setMyClaimedSlot(mySlotData.slotLabel);
+              }
+            }
+          } catch (e) {
+            // Ignore slot load errors
+          } finally {
+            setLoadingSlots(false);
+          }
+        } else {
+          setSlotsEnabled(false);
+          setMyClaimedSlot(null);
+          setQuizSlots([]);
+        }
+      } else {
+        setSlotsEnabled(false);
+        setMyClaimedSlot(null);
+        setQuizSlots([]);
       }
     } catch (e) {
       console.error(e);
@@ -235,6 +281,18 @@ export const ParticipantEventPage: React.FC = () => {
         }
         setHasSubmittedQuiz(false);
         setSelectedQuizOption(null);
+        // Reset slot state for new activity
+        setMyClaimedSlot(null);
+        setSelectedSlot(null);
+        setSlotError(null);
+        setQuizSlots([]);
+        // Check if new activity has slots enabled
+        const newAct = data.activity;
+        if (newAct?.type === "quiz" && newAct?.settings?.require_slot_selection) {
+          setSlotsEnabled(true);
+        } else {
+          setSlotsEnabled(false);
+        }
         loadData();
       });
 
@@ -268,6 +326,10 @@ export const ParticipantEventPage: React.FC = () => {
         setSelectedQuizOption(null);
         setWordCloudList([]);
         setPollResults({ options: [], total: 0 });
+        setMyClaimedSlot(null);
+        setSelectedSlot(null);
+        setSlotError(null);
+        setQuizSlots([]);
         setActiveActivity({ ...act, status: "LIVE" });
         loadData();
       });
@@ -311,6 +373,12 @@ export const ParticipantEventPage: React.FC = () => {
         );
       });
 
+      socket.on("quiz:slots_updated", (data) => {
+        if (data?.slots) {
+          setQuizSlots(data.slots);
+        }
+      });
+
       return () => {
         leaveEventRoom(eventId);
         socket.off("participant:joined");
@@ -329,6 +397,7 @@ export const ParticipantEventPage: React.FC = () => {
         socket.off("quiz:question_changed");
         socket.off("quiz:leaderboard_updated");
         socket.off("quiz:finished");
+        socket.off("quiz:slots_updated");
       };
     }
   }, [eventId]);
@@ -445,6 +514,31 @@ export const ParticipantEventPage: React.FC = () => {
         setQuizSubmitError(msg);
         console.error("Quiz answer submission failed", e);
       }
+    }
+  };
+
+  // Claim Quiz Slot
+  const handleClaimSlot = async () => {
+    if (!selectedSlot || !activeActivity || !participant) return;
+    setClaimingSlot(true);
+    setSlotError(null);
+    try {
+      const actId = activeActivity.id || activeActivity._id;
+      const pId = participant.id || participant._id;
+      const res = await api.post(`/quizzes/${actId}/quiz-slots/claim`, {
+        slotLabel: selectedSlot,
+        participantId: pId,
+        participantName: participant.name,
+      });
+      if (res.success) {
+        setMyClaimedSlot(res.slot.slotLabel);
+        if (res.slots) setQuizSlots(res.slots);
+      }
+    } catch (e: any) {
+      const msg = e?.message || "Failed to claim slot. It may already be taken.";
+      setSlotError(msg);
+    } finally {
+      setClaimingSlot(false);
     }
   };
 
@@ -937,7 +1031,110 @@ export const ParticipantEventPage: React.FC = () => {
                 totalQuestions={activeActivity.questions.length}
                 userTimeMs={myLeaderboardEntry?.total_time_ms || 0}
               />
+            ) : slotsEnabled && !myClaimedSlot ? (
+              /* ── SLOT SELECTION SCREEN ── */
+              <div className="space-y-5">
+                <div className="text-center space-y-2">
+                  <div className="w-16 h-16 rounded-3xl bg-purple-500/10 border border-purple-500/30 text-purple-400 flex items-center justify-center mx-auto shadow-xl">
+                    <span className="text-3xl">🎟️</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-purple-400 bg-purple-500/10 px-3 py-1 rounded-full border border-purple-500/30">
+                      Select Your Slot
+                    </span>
+                    <h2 className="text-xl font-black text-white mt-2 tracking-tight">
+                      {activeActivity.title}
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-1 max-w-xs mx-auto">
+                      Choose your slot to join this quiz. Each slot can only be claimed by one participant.
+                    </p>
+                  </div>
+                </div>
+
+                {loadingSlots ? (
+                  <div className="flex justify-center py-6">
+                    <div className="w-6 h-6 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" />
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {/* Slot dropdown */}
+                    <div className="relative">
+                      <select
+                        value={selectedSlot || ""}
+                        onChange={(e) => {
+                          setSelectedSlot(e.target.value || null);
+                          setSlotError(null);
+                        }}
+                        className="w-full appearance-none bg-[#121722] border border-slate-700/80 rounded-2xl px-4 py-3.5 text-sm text-white focus:outline-none focus:border-purple-500 transition-colors pr-10 cursor-pointer"
+                      >
+                        <option value="">— Select a slot —</option>
+                        {quizSlots.map((slot) => (
+                          <option
+                            key={slot.slotLabel}
+                            value={slot.slotLabel}
+                            disabled={slot.isClaimed}
+                          >
+                            {slot.slotLabel}{slot.isClaimed ? ` (Taken by ${slot.participantName || "someone"})` : " (Available)"}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                    </div>
+
+                    {/* Slot status grid */}
+                    <div className="grid grid-cols-2 gap-2">
+                      {quizSlots.map((slot) => (
+                        <button
+                          key={slot.slotLabel}
+                          type="button"
+                          disabled={slot.isClaimed}
+                          onClick={() => {
+                            if (!slot.isClaimed) {
+                              setSelectedSlot(slot.slotLabel);
+                              setSlotError(null);
+                            }
+                          }}
+                          className={`flex items-center gap-2 p-2.5 rounded-xl border text-xs font-semibold transition-all text-left ${
+                            slot.isClaimed
+                              ? "border-slate-800 bg-slate-900/50 text-slate-500 cursor-not-allowed"
+                              : selectedSlot === slot.slotLabel
+                              ? "border-purple-500/60 bg-purple-500/10 text-purple-300 shadow-sm"
+                              : "border-slate-700/60 bg-[#121722] text-slate-300 hover:border-purple-500/40 hover:bg-purple-500/5"
+                          }`}
+                        >
+                          <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                            slot.isClaimed ? "bg-red-500" : "bg-emerald-400"
+                          }`} />
+                          <div className="min-w-0">
+                            <div className="truncate font-bold">{slot.slotLabel}</div>
+                            <div className={`text-[10px] font-mono ${slot.isClaimed ? "text-red-400" : "text-emerald-400"}`}>
+                              {slot.isClaimed ? `• ${slot.participantName || "Taken"}` : "• Available"}
+                            </div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+
+                    {slotError && (
+                      <div className="p-3 rounded-xl bg-red-950/40 border border-red-500/30 text-red-300 text-xs text-center">
+                        {slotError}
+                      </div>
+                    )}
+
+                    <motion.button
+                      whileHover={{ scale: 1.01 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={handleClaimSlot}
+                      disabled={!selectedSlot || claimingSlot}
+                      className="w-full py-3.5 rounded-2xl bg-purple-500 hover:bg-purple-400 text-white font-black text-sm shadow-lg shadow-purple-950/40 transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {claimingSlot ? "Claiming Slot..." : selectedSlot ? `Claim "${selectedSlot}" & Enter Quiz` : "Select a slot to continue"}
+                    </motion.button>
+                  </div>
+                )}
+              </div>
             ) : (
+
               (() => {
                 const qIdx = activeActivity.activeQuestionIndex || 0;
                 const currentQ = activeActivity.questions[qIdx];
@@ -945,6 +1142,15 @@ export const ParticipantEventPage: React.FC = () => {
 
                 return (
                   <div className="space-y-4">
+                    {/* Claimed slot badge */}
+                    {myClaimedSlot && (
+                      <div className="flex justify-center">
+                        <span className="text-[10px] font-mono font-bold text-purple-300 bg-purple-500/10 border border-purple-500/30 px-3 py-1 rounded-full flex items-center gap-1.5">
+                          <span>🎟️</span>
+                          <span>Your slot: <strong>{myClaimedSlot}</strong></span>
+                        </span>
+                      </div>
+                    )}
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-mono font-bold text-purple-400 bg-purple-950/40 border border-purple-500/30 px-3 py-1 rounded-full">
                         Question {qIdx + 1} / {activeActivity.questions.length}

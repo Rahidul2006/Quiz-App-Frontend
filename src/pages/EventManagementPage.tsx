@@ -26,7 +26,7 @@ import {
 } from "lucide-react";
 import { api } from "../services/api";
 import { getSocket, joinEventRoom, leaveEventRoom } from "../services/socket";
-import { Activity, EventItem, Participant, PollOption, QuizQuestion, LeaderboardEntry } from "../types";
+import { Activity, EventItem, Participant, PollOption, QuizQuestion, LeaderboardEntry, QuizSlotInfo } from "../types";
 import { QrModal } from "../components/qr/QrModal";
 import { PollVisualizer } from "../components/activities/PollVisualizer";
 import { WordCloudVisualizer } from "../components/activities/WordCloudVisualizer";
@@ -98,10 +98,16 @@ export const EventManagementPage: React.FC = () => {
     },
   ]);
 
+  // Quiz slot state — admin-defined join slots
+  const [quizSlotsEnabled, setQuizSlotsEnabled] = useState(false);
+  const [quizSlotInputs, setQuizSlotInputs] = useState<string[]>(["Slot 1", "Slot 2", "Slot 3"]);
+
   // Live Results State
   const [pollResults, setPollResults] = useState<{ options: PollOption[]; total: number }>({ options: [], total: 0 });
   const [wordCloudWords, setWordCloudWords] = useState<any[]>([]);
   const [quizLeaderboard, setQuizLeaderboard] = useState<any[]>([]);
+  // Quiz slot state for admin view
+  const [liveQuizSlots, setLiveQuizSlots] = useState<QuizSlotInfo[]>([]);
 
   // Results Tab Inspector State
   const [selectedResultActivityId, setSelectedResultActivityId] = useState<string | null>(null);
@@ -150,6 +156,19 @@ export const EventManagementPage: React.FC = () => {
           } else if (act.type === "quiz") {
             const lb = await api.get(`/quizzes/${activeActId}/leaderboard`);
             setQuizLeaderboard(lb);
+            // Load slot data if configured
+            if (act.settings?.require_slot_selection) {
+              try {
+                const slotData = await api.get(`/quizzes/${activeActId}/quiz-slots`);
+                if (slotData.slotsEnabled) {
+                  setLiveQuizSlots(slotData.slots || []);
+                }
+              } catch (_) {
+                // ignore slot load errors
+              }
+            } else {
+              setLiveQuizSlots([]);
+            }
           }
         }
       }
@@ -325,6 +344,12 @@ export const EventManagementPage: React.FC = () => {
         setQuizLeaderboard(data.leaderboard);
       });
 
+      socket.on("quiz:slots_updated", (data) => {
+        if (data?.slots) {
+          setLiveQuizSlots(data.slots);
+        }
+      });
+
       return () => {
         leaveEventRoom(eventId);
         socket.off("participant:joined");
@@ -342,6 +367,7 @@ export const EventManagementPage: React.FC = () => {
         socket.off("wordcloud:updated");
         socket.off("quiz:leaderboard_updated");
         socket.off("quiz:finished");
+        socket.off("quiz:slots_updated");
       };
     }
   }, [eventId]);
@@ -539,11 +565,19 @@ export const EventManagementPage: React.FC = () => {
         })),
       }));
 
+      const filteredSlots = quizSlotsEnabled
+        ? quizSlotInputs.map((s) => s.trim()).filter((s) => s.length > 0)
+        : [];
+
       await api.post(`/events/${eventId}/activities`, {
         type: "quiz",
         title: activityTitle.trim(),
         duration: chosenDuration,
-        settings: { quiz_state: "answering" },
+        settings: {
+          quiz_state: "answering",
+          quiz_slots: filteredSlots,
+          require_slot_selection: filteredSlots.length > 0,
+        },
         questions,
       });
     }
@@ -554,6 +588,20 @@ export const EventManagementPage: React.FC = () => {
     setActivityDuration(30);
     setIsCustomDuration(false);
     setCustomDurationVal("30");
+    setQuizSlotsEnabled(false);
+    setQuizSlotInputs(["Slot 1", "Slot 2", "Slot 3"]);
+    setQuizQuestions([
+      {
+        question_text: "",
+        time_limit_sec: 15,
+        options: [
+          { text: "", is_correct: true },
+          { text: "", is_correct: false },
+          { text: "", is_correct: false },
+          { text: "", is_correct: false },
+        ],
+      },
+    ]);
     loadEventData();
   };
 
@@ -1106,7 +1154,18 @@ export const EventManagementPage: React.FC = () => {
                         />
                       </div>
                     )}
+
+                    {/* Quiz Slot Indicator */}
+                    {activity.type === "quiz" && activity.settings?.require_slot_selection && (
+                      <div className="mt-3 flex items-center gap-2">
+                        <span className="text-[10px] font-mono font-bold text-purple-400 bg-purple-500/10 border border-purple-500/30 px-2.5 py-1 rounded-full flex items-center gap-1.5">
+                          <span>🎟️</span>
+                          <span>{activity.settings.quiz_slots?.length || 0} Participant Slots Defined</span>
+                        </span>
+                      </div>
+                    )}
                   </motion.div>
+
                 );
               })}
 
@@ -1126,6 +1185,48 @@ export const EventManagementPage: React.FC = () => {
                     <Plus className="w-4 h-4" />
                     <span>Create Your First Activity</span>
                   </button>
+                </div>
+              )}
+
+              {/* Live Slot Occupancy Panel */}
+              {activeActivity?.type === "quiz" && activeActivity?.settings?.require_slot_selection && liveQuizSlots.length > 0 && (
+                <div className="bg-[#0f1520] border border-purple-500/30 rounded-3xl p-5 shadow-xl">
+                  <div className="flex items-center gap-2.5 mb-4 pb-3.5 border-b border-slate-800/80">
+                    <span className="text-lg">🎟️</span>
+                    <div>
+                      <h4 className="text-sm font-bold text-purple-300">Slot Occupancy — Live</h4>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        {liveQuizSlots.filter(s => s.isClaimed).length} / {liveQuizSlots.length} slots claimed
+                      </p>
+                    </div>
+                    <span className="ml-auto text-[10px] font-mono font-bold text-purple-400 bg-purple-500/10 border border-purple-500/30 px-2.5 py-1 rounded-full flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-ping" />
+                      LIVE
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
+                    {liveQuizSlots.map((slot) => (
+                      <div
+                        key={slot.slotLabel}
+                        className={`flex items-start gap-2 p-2.5 rounded-xl border text-xs transition-all ${
+                          slot.isClaimed
+                            ? "border-emerald-500/30 bg-emerald-500/5"
+                            : "border-slate-800/80 bg-[#090d14]"
+                        }`}
+                      >
+                        <span className={`w-2 h-2 rounded-full mt-0.5 flex-shrink-0 ${slot.isClaimed ? "bg-emerald-400" : "bg-slate-600"}`} />
+                        <div className="min-w-0">
+                          <div className="font-bold text-slate-200 truncate">{slot.slotLabel}</div>
+                          {slot.isClaimed ? (
+                            <div className="text-[10px] text-emerald-400 font-mono truncate">✓ {slot.participantName}</div>
+                          ) : (
+                            <div className="text-[10px] text-slate-500 font-mono">Available</div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
@@ -1740,6 +1841,75 @@ export const EventManagementPage: React.FC = () => {
                           />
                         </div>
                       ))}
+                    </div>
+
+                    {/* ── Quiz Slot Selector ── */}
+                    <div className="border border-slate-700/60 rounded-2xl overflow-hidden">
+                      <button
+                        type="button"
+                        onClick={() => setQuizSlotsEnabled(!quizSlotsEnabled)}
+                        className={`w-full flex items-center justify-between px-4 py-3 text-xs font-bold transition-all ${
+                          quizSlotsEnabled
+                            ? "bg-purple-500/10 text-purple-300"
+                            : "bg-[#090d14] text-slate-400 hover:text-slate-200"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="text-base">🎟️</span>
+                          <span>Participant Slot Selection</span>
+                          {quizSlotsEnabled && (
+                            <span className="px-2 py-0.5 rounded-full bg-purple-500/20 border border-purple-500/40 text-purple-300 text-[10px] font-bold">
+                              ENABLED
+                            </span>
+                          )}
+                        </div>
+                        <span className={`text-base transition-transform ${quizSlotsEnabled ? "rotate-90" : ""}`}>›</span>
+                      </button>
+
+                      {quizSlotsEnabled && (
+                        <div className="px-4 pb-4 pt-3 bg-[#0d1220] space-y-3">
+                          <p className="text-[11px] text-slate-400 leading-relaxed">
+                            Define dropdown options that participants must select when joining. Each option can only be claimed by <strong className="text-slate-300">one person</strong>.
+                          </p>
+                          <div className="space-y-2">
+                            {quizSlotInputs.map((slot, idx) => (
+                              <div key={idx} className="flex items-center gap-2">
+                                <span className="w-6 h-6 rounded-lg bg-purple-500/10 border border-purple-500/30 text-purple-400 text-[10px] font-bold flex items-center justify-center flex-shrink-0">
+                                  {idx + 1}
+                                </span>
+                                <input
+                                  type="text"
+                                  value={slot}
+                                  onChange={(e) => {
+                                    const copy = [...quizSlotInputs];
+                                    copy[idx] = e.target.value;
+                                    setQuizSlotInputs(copy);
+                                  }}
+                                  placeholder={`Slot ${idx + 1} name`}
+                                  className="flex-1 bg-[#090d14] border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 transition-colors"
+                                />
+                                {quizSlotInputs.length > 1 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setQuizSlotInputs(quizSlotInputs.filter((_, i) => i !== idx))}
+                                    className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded-lg transition-colors"
+                                  >
+                                    <X className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setQuizSlotInputs([...quizSlotInputs, `Slot ${quizSlotInputs.length + 1}`])}
+                            className="text-[11px] font-semibold text-purple-400 hover:text-purple-300 transition-colors flex items-center gap-1.5"
+                          >
+                            <Plus className="w-3 h-3" />
+                            <span>Add another slot</span>
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
